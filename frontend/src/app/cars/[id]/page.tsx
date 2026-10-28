@@ -47,27 +47,7 @@ export default async function CarDetailsPage({
 
   return (
     <main className="min-h-screen bg-zinc-50 text-zinc-900">
-      {/* Navigation */}
-      <header className="bg-zinc-950 px-6 py-5 text-white">
-        <nav className="mx-auto flex max-w-6xl items-center justify-between">
-          <Link
-            href="/"
-            className="text-3xl font-black tracking-tight"
-          >
-            REVV<span className="text-blue-500">.</span>
-          </Link>
-
-          <Link
-            href="/#explore"
-            className="text-sm font-medium text-zinc-300 hover:text-white"
-          >
-            Explore Cars
-          </Link>
-        </nav>
-      </header>
-
       <div className="mx-auto max-w-6xl px-6 py-10">
-        {/* Back navigation */}
         <Link
           href="/#explore"
           className="text-sm font-medium text-blue-600 hover:underline"
@@ -75,7 +55,6 @@ export default async function CarDetailsPage({
           ← Back to vehicles
         </Link>
 
-        {/* Vehicle heading */}
         <div className="mt-8">
           <p className="mb-2 text-sm font-semibold uppercase tracking-widest text-blue-600">
             Vehicle Details
@@ -91,14 +70,14 @@ export default async function CarDetailsPage({
         </div>
 
         <div className="mt-10 grid gap-8 lg:grid-cols-3">
-          {/* Main content */}
           <div className="space-y-8 lg:col-span-2">
-            {/* Photo placeholder */}
+            {/* Vehicle gallery */}
             <div className="flex aspect-video items-center justify-center rounded-2xl bg-zinc-200 text-zinc-500">
               <div className="text-center">
                 <p className="text-xl font-semibold">
                   Vehicle Gallery
                 </p>
+
                 <p className="mt-2 text-sm">
                   Vehicle images coming soon
                 </p>
@@ -136,7 +115,7 @@ export default async function CarDetailsPage({
               </div>
             </section>
 
-            {/* Price intelligence placeholder */}
+            {/* REVV Intelligence */}
             <section className="rounded-2xl border border-zinc-200 bg-white p-7">
               <p className="mb-2 text-sm font-semibold uppercase tracking-widest text-blue-600">
                 REVV Intelligence
@@ -164,8 +143,8 @@ export default async function CarDetailsPage({
             </section>
           </div>
 
-          {/* Price and seller information */}
-          <aside className="lg:col-span-1">
+          {/* Price panel */}
+          <aside>
             <div className="sticky top-6 rounded-2xl border border-zinc-200 bg-white p-7 shadow-sm">
               <p className="text-sm font-medium text-zinc-500">
                 Asking Price
@@ -178,9 +157,7 @@ export default async function CarDetailsPage({
               <div className="mt-7 space-y-4 border-t border-zinc-200 pt-6">
                 <div className="flex justify-between">
                   <span className="text-zinc-500">Year</span>
-                  <span className="font-semibold">
-                    {car.year}
-                  </span>
+                  <span className="font-semibold">{car.year}</span>
                 </div>
 
                 <div className="flex justify-between">
@@ -220,17 +197,6 @@ export default async function CarDetailsPage({
           </aside>
         </div>
       </div>
-
-      <footer className="mt-16 bg-zinc-950 px-6 py-8 text-white">
-        <div className="mx-auto flex max-w-6xl justify-between">
-          <span className="text-xl font-black">
-            REVV<span className="text-blue-500">.</span>
-          </span>
-          <span className="text-sm text-zinc-400">
-            Drive Smarter. Buy Better.
-          </span>
-        </div>
-      </footer>
     </main>
   );
 }

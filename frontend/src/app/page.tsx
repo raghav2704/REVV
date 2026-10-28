@@ -1,6 +1,5 @@
 
 import CarSearch, { type Car } from "@/components/CarSearch";
-import Link from "next/link";
 
 async function getCars(): Promise<Car[]> {
   const response = await fetch(
@@ -22,28 +21,6 @@ export default async function Home() {
 
   return (
     <main className="min-h-screen bg-zinc-50 text-zinc-900">
-      {/* Navigation */}
-      <header className="bg-zinc-950 px-6 py-5 text-white">
-        <nav className="mx-auto flex max-w-6xl items-center justify-between">
-          <Link
-            href="/"
-            className="text-3xl font-black tracking-tight"
-          >
-            REVV<span className="text-blue-500">.</span>
-          </Link>
-
-          <div className="flex items-center gap-6 text-sm font-medium">
-            <a href="#explore" className="hover:text-blue-400">
-              Explore Cars
-            </a>
-
-            <span className="hidden text-zinc-500 sm:inline">
-              Sell Your Car — Coming Soon
-            </span>
-          </div>
-        </nav>
-      </header>
-
       {/* Hero */}
       <section className="bg-zinc-950 px-6 py-20 text-white">
         <div className="mx-auto max-w-6xl">
@@ -88,7 +65,6 @@ export default async function Home() {
           </p>
         </div>
 
-        {/* Interactive search and vehicle cards */}
         <CarSearch cars={cars} />
 
         <p className="mt-10 text-sm text-zinc-500">
@@ -117,19 +93,6 @@ export default async function Home() {
           </p>
         </div>
       </section>
-
-      {/* Footer */}
-      <footer className="bg-zinc-950 px-6 py-8 text-white">
-        <div className="mx-auto flex max-w-6xl flex-col justify-between gap-3 sm:flex-row">
-          <span className="text-xl font-black">
-            REVV<span className="text-blue-500">.</span>
-          </span>
-
-          <p className="text-sm text-zinc-400">
-            Drive Smarter. Buy Better.
-          </p>
-        </div>
-      </footer>
     </main>
   );
 }
