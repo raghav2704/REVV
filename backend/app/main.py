@@ -1,12 +1,33 @@
 
-from fastapi import Depends, FastAPI, HTTPException, status
+import io
+import uuid
+from pathlib import Path
+from typing import Annotated
+from fastapi.openapi.utils import get_openapi
+
+
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    HTTPException,
+    UploadFile,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.models import Vehicle
+from app.models import Vehicle, VehicleImage
+
+
+# --------------------------------------------------
+# APPLICATION
+# --------------------------------------------------
 
 app = FastAPI(
     title="REVV API",
@@ -19,11 +40,45 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:3001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
     ],
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
 
+
+# --------------------------------------------------
+# IMAGE STORAGE
+# --------------------------------------------------
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+
+UPLOAD_DIR = BACKEND_DIR / "uploads" / "vehicles"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+app.mount(
+    "/uploads",
+    StaticFiles(directory=str(BACKEND_DIR / "uploads")),
+    name="uploads",
+)
+
+MAX_IMAGES_PER_VEHICLE = 10
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
+# --------------------------------------------------
+# DATABASE DEPENDENCY
+# --------------------------------------------------
+
+def get_db():
+    with SessionLocal() as db:
+        yield db
+
+
+# --------------------------------------------------
+# SCHEMAS
+# --------------------------------------------------
 
 class VehicleCreate(BaseModel):
     make: str = Field(min_length=1, max_length=100)
@@ -34,9 +89,17 @@ class VehicleCreate(BaseModel):
     location: str = Field(min_length=1, max_length=100)
 
 
-def get_db():
-    with SessionLocal() as db:
-        yield db
+# --------------------------------------------------
+# HELPERS
+# --------------------------------------------------
+
+def image_to_dict(image: VehicleImage):
+    return {
+        "id": image.id,
+        "url": f"/uploads/vehicles/{image.filename}",
+        "is_cover": image.is_cover,
+        "position": image.position,
+    }
 
 
 def vehicle_to_dict(vehicle: Vehicle):
@@ -51,10 +114,21 @@ def vehicle_to_dict(vehicle: Vehicle):
     }
 
 
+# --------------------------------------------------
+# HEALTH CHECK
+# --------------------------------------------------
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "REVV API"}
+    return {
+        "status": "ok",
+        "service": "REVV API",
+    }
 
+
+# --------------------------------------------------
+# LIST VEHICLES
+# --------------------------------------------------
 
 @app.get("/api/v1/cars")
 def get_cars(db: Session = Depends(get_db)):
@@ -75,6 +149,10 @@ def get_cars(db: Session = Depends(get_db)):
     }
 
 
+# --------------------------------------------------
+# GET ONE VEHICLE
+# --------------------------------------------------
+
 @app.get("/api/v1/cars/{car_id}")
 def get_car(
     car_id: int,
@@ -90,6 +168,10 @@ def get_car(
 
     return vehicle_to_dict(car)
 
+
+# --------------------------------------------------
+# CREATE VEHICLE
+# --------------------------------------------------
 
 @app.post(
     "/api/v1/cars",
@@ -113,3 +195,210 @@ def create_car(
     db.refresh(new_car)
 
     return vehicle_to_dict(new_car)
+
+
+# --------------------------------------------------
+# UPLOAD VEHICLE PHOTOS
+# --------------------------------------------------
+
+@app.post(
+    "/api/v1/cars/{car_id}/images",
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_vehicle_images(
+    car_id: int,
+    files: Annotated[list[UploadFile], File()],
+    db: Session = Depends(get_db),
+):
+    vehicle = db.get(Vehicle, car_id)
+
+    if vehicle is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found",
+        )
+
+    if not 1 <= len(files) <= MAX_IMAGES_PER_VEHICLE:
+        raise HTTPException(
+            status_code=400,
+            detail="Upload between 1 and 10 photos.",
+        )
+
+    existing_images = db.scalars(
+        select(VehicleImage)
+        .where(VehicleImage.vehicle_id == car_id)
+        .order_by(VehicleImage.position)
+    ).all()
+
+    if len(existing_images) + len(files) > MAX_IMAGES_PER_VEHICLE:
+        raise HTTPException(
+            status_code=400,
+            detail="Maximum 10 photos per vehicle.",
+        )
+
+    prepared_images: list[tuple[str, bytes]] = []
+
+    for file in files:
+        try:
+            # Read at most 5 MB + 1 byte.
+            # This prevents reading an arbitrarily large
+            # uploaded file into application memory.
+            contents = await file.read(MAX_UPLOAD_BYTES + 1)
+
+            if len(contents) > MAX_UPLOAD_BYTES:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Each photo must be 5 MB or smaller.",
+                )
+
+            try:
+                with Image.open(io.BytesIO(contents)) as image:
+                    if image.format not in {"JPEG", "PNG", "WEBP"}:
+                        raise ValueError("Unsupported image format")
+
+                    image.verify()
+
+                with Image.open(io.BytesIO(contents)) as image:
+                    if image.width * image.height > 25_000_000:
+                        raise ValueError("Image dimensions too large")
+
+                    image = image.convert("RGB")
+                    image.thumbnail((1600, 1600))
+
+                    output = io.BytesIO()
+                    image.save(
+                        output,
+                        format="JPEG",
+                        quality=85,
+                        optimize=True,
+                    )
+
+            except (
+                UnidentifiedImageError,
+                ValueError,
+                OSError,
+                Image.DecompressionBombError,
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid image. Please use JPG, PNG or WEBP.",
+                )
+
+            filename = f"{uuid.uuid4().hex}.jpg"
+            prepared_images.append(
+                (filename, output.getvalue())
+            )
+
+        finally:
+            await file.close()
+
+    saved_paths: list[Path] = []
+    uploaded_images: list[dict] = []
+
+    try:
+        for index, (filename, contents) in enumerate(
+            prepared_images
+        ):
+            path = UPLOAD_DIR / filename
+            path.write_bytes(contents)
+            saved_paths.append(path)
+
+            record = VehicleImage(
+                vehicle_id=car_id,
+                filename=filename,
+                is_cover=(
+                    len(existing_images) == 0 and index == 0
+                ),
+                position=len(existing_images) + index,
+            )
+
+            db.add(record)
+            db.flush()
+
+            uploaded_images.append(image_to_dict(record))
+
+        db.commit()
+
+    except Exception:
+        db.rollback()
+
+        for path in saved_paths:
+            path.unlink(missing_ok=True)
+
+        raise
+
+    return {
+        "vehicle_id": car_id,
+        "images": uploaded_images,
+    }
+
+
+# --------------------------------------------------
+# GET VEHICLE PHOTOS
+# --------------------------------------------------
+
+@app.get("/api/v1/cars/{car_id}/images")
+def get_vehicle_images(
+    car_id: int,
+    db: Session = Depends(get_db),
+):
+    vehicle = db.get(Vehicle, car_id)
+
+    if vehicle is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found",
+        )
+
+    images = db.scalars(
+        select(VehicleImage)
+        .where(VehicleImage.vehicle_id == car_id)
+        .order_by(VehicleImage.position, VehicleImage.id)
+    ).all()
+
+    return {
+        "vehicle_id": car_id,
+        "images": [image_to_dict(image) for image in images],
+    }
+
+
+# --------------------------------------------------
+# SWAGGER UI FILE UPLOAD COMPATIBILITY
+# --------------------------------------------------
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    # Swagger UI currently expects format=binary
+    # when displaying multiple file upload inputs.
+    for component in (
+        schema.get("components", {})
+        .get("schemas", {})
+        .values()
+    ):
+        for property_schema in (
+            component.get("properties", {}).values()
+        ):
+            items = property_schema.get("items", {})
+
+            if (
+                items.get("contentMediaType")
+                == "application/octet-stream"
+            ):
+                items.pop("contentMediaType")
+                items["format"] = "binary"
+
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi
+
