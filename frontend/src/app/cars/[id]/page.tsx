@@ -1,27 +1,54 @@
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import type { Car } from "@/components/CarSearch";
+
+import {
+  VehicleGallery,
+  type Car,
+  type VehiclePhoto,
+} from "@/components/CarSearch";
+
+const API_URL = "http://127.0.0.1:8000";
 
 type PageProps = {
   params: Promise<{ id: string }>;
 };
 
-async function getCar(id: string): Promise<Car | null> {
-  const response = await fetch(
-    `http://127.0.0.1:8000/api/v1/cars/${id}`,
+async function getVehicle(id: string): Promise<{
+  car: Car;
+  images: VehiclePhoto[];
+} | null> {
+  const carResponse = await fetch(
+    `${API_URL}/api/v1/cars/${id}`,
     { cache: "no-store" }
   );
 
-  if (response.status === 404 || response.status === 422) {
+  if (carResponse.status === 404) {
     return null;
   }
 
-  if (!response.ok) {
-    throw new Error("Failed to retrieve vehicle");
+  if (!carResponse.ok) {
+    throw new Error("Failed to load vehicle");
   }
 
-  return response.json();
+  const car: Car = await carResponse.json();
+
+  const imageResponse = await fetch(
+    `${API_URL}/api/v1/cars/${id}/images`,
+    { cache: "no-store" }
+  );
+
+  if (!imageResponse.ok) {
+    throw new Error("Failed to load vehicle photos");
+  }
+
+  const imageData: { images: VehiclePhoto[] } =
+    await imageResponse.json();
+
+  return {
+    car,
+    images: imageData.images,
+  };
 }
 
 export default async function CarDetailsPage({
@@ -33,13 +60,18 @@ export default async function CarDetailsPage({
     notFound();
   }
 
-  const car = await getCar(id);
+  const result = await getVehicle(id);
 
-  if (!car) {
+  if (!result) {
     notFound();
   }
 
-  const formattedPrice = new Intl.NumberFormat("en-NZ", {
+  const { car, images } = result;
+
+  const title =
+    `${car.year} ${car.make} ${car.model}`;
+
+  const price = new Intl.NumberFormat("en-NZ", {
     style: "currency",
     currency: "NZD",
     maximumFractionDigits: 0,
@@ -61,7 +93,7 @@ export default async function CarDetailsPage({
           </p>
 
           <h1 className="text-4xl font-bold">
-            {car.year} {car.make} {car.model}
+            {title}
           </h1>
 
           <p className="mt-3 text-zinc-500">
@@ -71,20 +103,13 @@ export default async function CarDetailsPage({
 
         <div className="mt-10 grid gap-8 lg:grid-cols-3">
           <div className="space-y-8 lg:col-span-2">
-            {/* Vehicle gallery */}
-            <div className="flex aspect-video items-center justify-center rounded-2xl bg-zinc-200 text-zinc-500">
-              <div className="text-center">
-                <p className="text-xl font-semibold">
-                  Vehicle Gallery
-                </p>
+            {/* INTERACTIVE GALLERY */}
+            <VehicleGallery
+              images={images}
+              title={title}
+            />
 
-                <p className="mt-2 text-sm">
-                  Vehicle images coming soon
-                </p>
-              </div>
-            </div>
-
-            {/* Specifications */}
+            {/* VEHICLE SPECIFICATIONS */}
             <section className="rounded-2xl border border-zinc-200 bg-white p-7">
               <h2 className="mb-6 text-2xl font-bold">
                 Vehicle Specifications
@@ -106,7 +131,6 @@ export default async function CarDetailsPage({
                     <p className="text-sm text-zinc-500">
                       {label}
                     </p>
-
                     <p className="mt-2 font-semibold">
                       {value}
                     </p>
@@ -115,7 +139,7 @@ export default async function CarDetailsPage({
               </div>
             </section>
 
-            {/* REVV Intelligence */}
+            {/* INTELLIGENCE */}
             <section className="rounded-2xl border border-zinc-200 bg-white p-7">
               <p className="mb-2 text-sm font-semibold uppercase tracking-widest text-blue-600">
                 REVV Intelligence
@@ -126,38 +150,30 @@ export default async function CarDetailsPage({
               </h2>
 
               <p className="mt-4 text-zinc-600">
-                Price history, market comparisons and
+                Market comparisons, price history and
                 AI-assisted valuations are planned
-                for a future release.
+                for future REVV releases.
               </p>
-
-              <div className="mt-6 rounded-xl bg-zinc-100 p-5">
-                <p className="text-sm font-medium text-zinc-500">
-                  Intelligence features
-                </p>
-
-                <p className="mt-2 font-semibold">
-                  Coming Soon
-                </p>
-              </div>
             </section>
           </div>
 
-          {/* Price panel */}
+          {/* PRICE PANEL */}
           <aside>
             <div className="sticky top-6 rounded-2xl border border-zinc-200 bg-white p-7 shadow-sm">
-              <p className="text-sm font-medium text-zinc-500">
+              <p className="text-sm text-zinc-500">
                 Asking Price
               </p>
 
               <p className="mt-2 text-4xl font-bold text-blue-600">
-                {formattedPrice}
+                {price}
               </p>
 
               <div className="mt-7 space-y-4 border-t border-zinc-200 pt-6">
                 <div className="flex justify-between">
                   <span className="text-zinc-500">Year</span>
-                  <span className="font-semibold">{car.year}</span>
+                  <span className="font-semibold">
+                    {car.year}
+                  </span>
                 </div>
 
                 <div className="flex justify-between">
@@ -176,8 +192,8 @@ export default async function CarDetailsPage({
               </div>
 
               <div className="mt-8 rounded-lg bg-blue-50 p-4 text-sm text-blue-800">
-                This is a fictional demonstration listing.
-                Seller enquiries are not available yet.
+                This is a demonstration listing.
+                Seller enquiries are not yet available.
               </div>
 
               <button
@@ -189,7 +205,7 @@ export default async function CarDetailsPage({
 
               <Link
                 href="/#explore"
-                className="mt-3 block w-full rounded-lg border border-zinc-300 px-5 py-4 text-center font-semibold hover:bg-zinc-50"
+                className="mt-3 block rounded-lg border border-zinc-300 px-5 py-4 text-center font-semibold hover:bg-zinc-50"
               >
                 Browse More Cars
               </Link>
