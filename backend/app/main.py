@@ -1,5 +1,7 @@
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,6 +13,25 @@ app = FastAPI(
     description="New Zealand Automotive Marketplace API",
     version="1.0.0",
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
+
+
+class VehicleCreate(BaseModel):
+    make: str = Field(min_length=1, max_length=100)
+    model: str = Field(min_length=1, max_length=100)
+    year: int = Field(ge=1900, le=2100)
+    price_nzd: int = Field(gt=0)
+    mileage_km: int = Field(ge=0)
+    location: str = Field(min_length=1, max_length=100)
 
 
 def get_db():
@@ -68,3 +89,27 @@ def get_car(
         )
 
     return vehicle_to_dict(car)
+
+
+@app.post(
+    "/api/v1/cars",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_car(
+    car: VehicleCreate,
+    db: Session = Depends(get_db),
+):
+    new_car = Vehicle(
+        make=car.make.strip(),
+        model=car.model.strip(),
+        year=car.year,
+        price_nzd=car.price_nzd,
+        mileage_km=car.mileage_km,
+        location=car.location.strip(),
+    )
+
+    db.add(new_car)
+    db.commit()
+    db.refresh(new_car)
+
+    return vehicle_to_dict(new_car)
