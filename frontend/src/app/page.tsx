@@ -1,13 +1,6 @@
 
-type Car = {
-  id: number;
-  make: string;
-  model: string;
-  year: number;
-  price_nzd: number;
-  mileage_km: number;
-  location: string;
-};
+import CarSearch, { type Car } from "@/components/CarSearch";
+import Link from "next/link";
 
 async function getCars(): Promise<Car[]> {
   const response = await fetch(
@@ -19,7 +12,8 @@ async function getCars(): Promise<Car[]> {
     throw new Error("Failed to load vehicles");
   }
 
-  const result = await response.json();
+  const result: { data: Car[] } = await response.json();
+
   return result.data;
 }
 
@@ -28,81 +22,114 @@ export default async function Home() {
 
   return (
     <main className="min-h-screen bg-zinc-50 text-zinc-900">
+      {/* Navigation */}
       <header className="bg-zinc-950 px-6 py-5 text-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between">
-          <h1 className="text-3xl font-black tracking-tight">
+        <nav className="mx-auto flex max-w-6xl items-center justify-between">
+          <Link
+            href="/"
+            className="text-3xl font-black tracking-tight"
+          >
             REVV<span className="text-blue-500">.</span>
-          </h1>
-          <span className="text-sm text-zinc-400">
-            Buy. Sell. Compare.
-          </span>
-        </div>
+          </Link>
+
+          <div className="flex items-center gap-6 text-sm font-medium">
+            <a href="#explore" className="hover:text-blue-400">
+              Explore Cars
+            </a>
+
+            <span className="hidden text-zinc-500 sm:inline">
+              Sell Your Car — Coming Soon
+            </span>
+          </div>
+        </nav>
       </header>
 
+      {/* Hero */}
       <section className="bg-zinc-950 px-6 py-20 text-white">
         <div className="mx-auto max-w-6xl">
           <p className="mb-4 text-sm font-semibold tracking-widest text-blue-400">
-            AUTOMOTIVE MARKETPLACE
+            AUTOMOTIVE MARKETPLACE & INTELLIGENCE
           </p>
-          <h2 className="max-w-2xl text-5xl font-bold">
+
+          <h1 className="max-w-3xl text-5xl font-bold leading-tight md:text-6xl">
             Find your next drive.
-          </h2>
-          <p className="mt-5 max-w-xl text-lg text-zinc-400">
+          </h1>
+
+          <p className="mt-6 max-w-2xl text-lg leading-relaxed text-zinc-400">
             Discover vehicles, compare prices and make
             smarter buying decisions with REVV.
           </p>
+
+          <a
+            href="#explore"
+            className="mt-8 inline-block rounded-lg bg-blue-600 px-7 py-3 font-semibold text-white transition hover:bg-blue-700"
+          >
+            Explore Cars
+          </a>
         </div>
       </section>
 
-      <section className="mx-auto max-w-6xl px-6 py-12">
-        <div className="mb-8 flex items-center justify-between">
-          <h2 className="text-2xl font-bold">
+      {/* Marketplace */}
+      <section
+        id="explore"
+        className="mx-auto max-w-6xl px-6 py-14"
+      >
+        <div className="mb-8">
+          <p className="mb-2 text-sm font-semibold uppercase tracking-widest text-blue-600">
+            REVV MARKETPLACE
+          </p>
+
+          <h2 className="text-3xl font-bold">
             Explore Vehicles
           </h2>
-          <span className="text-sm text-zinc-500">
-            {cars.length} listings
-          </span>
+
+          <p className="mt-2 text-zinc-500">
+            Search and compare vehicles across New Zealand.
+          </p>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-3">
-          {cars.map((car) => (
-            <article
-              key={car.id}
-              className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm"
-            >
-              <div className="flex h-44 items-center justify-center bg-zinc-200 text-zinc-500">
-                Vehicle photo coming soon
-              </div>
+        {/* Interactive search and vehicle cards */}
+        <CarSearch cars={cars} />
 
-              <div className="p-5">
-                <h3 className="text-xl font-bold">
-                  {car.year} {car.make} {car.model}
-                </h3>
-
-                <p className="mt-3 text-2xl font-bold text-blue-600">
-                  {new Intl.NumberFormat("en-NZ", {
-                    style: "currency",
-                    currency: "NZD",
-                    maximumFractionDigits: 0,
-                  }).format(car.price_nzd)}
-                </p>
-
-                <div className="mt-4 flex justify-between text-sm text-zinc-500">
-                  <span>
-                    {car.mileage_km.toLocaleString("en-NZ")} km
-                  </span>
-                  <span>{car.location}</span>
-                </div>
-              </div>
-            </article>
-          ))}
-        </div>
-
-        <p className="mt-8 text-sm text-zinc-500">
-          Demonstration listings only. No vehicles are
-          currently advertised for sale through REVV.
+        <p className="mt-10 text-sm text-zinc-500">
+          Demonstration listings only. Vehicles displayed
+          are fictional and are not currently for sale
+          through REVV.
         </p>
       </section>
+
+      {/* Intelligence teaser */}
+      <section className="bg-zinc-900 px-6 py-16 text-white">
+        <div className="mx-auto max-w-6xl">
+          <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-blue-400">
+            COMING SOON
+          </p>
+
+          <h2 className="text-3xl font-bold">
+            REVV Intelligence
+          </h2>
+
+          <p className="mt-4 max-w-2xl text-zinc-400">
+            We're developing tools for vehicle price
+            tracking, market insights and AI-assisted
+            valuations to help buyers make more
+            informed decisions.
+          </p>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="bg-zinc-950 px-6 py-8 text-white">
+        <div className="mx-auto flex max-w-6xl flex-col justify-between gap-3 sm:flex-row">
+          <span className="text-xl font-black">
+            REVV<span className="text-blue-500">.</span>
+          </span>
+
+          <p className="text-sm text-zinc-400">
+            Drive Smarter. Buy Better.
+          </p>
+        </div>
+      </footer>
     </main>
   );
 }
