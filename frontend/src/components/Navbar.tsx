@@ -3,23 +3,29 @@ import Link from "next/link";
 
 export default function Navbar() {
   return (
-    <header className="bg-zinc-950 px-6 py-5 text-white">
-      <nav className="mx-auto flex max-w-6xl items-center justify-between">
+    <header className="border-b border-white/10 bg-[#090d14] px-6 py-5 text-white">
+      <nav className="mx-auto flex max-w-6xl items-center justify-between gap-4">
         <Link
           href="/"
-          className="text-3xl font-black tracking-tight"
+          className="text-3xl font-black tracking-[-0.08em]"
         >
-          REVV<span className="text-blue-500">.</span>
+          REV<span className="text-blue-500">V</span>
         </Link>
 
-        <div className="flex items-center gap-6 text-sm font-medium">
-          <Link href="/#explore" className="hover:text-blue-400">
+        <div className="flex items-center gap-5 text-sm font-medium sm:gap-8">
+          <Link
+            href="/#explore"
+            className="transition hover:text-blue-400"
+          >
             Explore Cars
           </Link>
 
-          <span className="hidden text-zinc-400 sm:inline">
-            Sell Your Car — Coming Soon
-          </span>
+          <Link
+            href="/sell"
+            className="rounded-lg border border-blue-500/50 px-4 py-2 transition hover:bg-blue-600"
+          >
+            Sell Your Car
+          </Link>
         </div>
       </nav>
     </header>
