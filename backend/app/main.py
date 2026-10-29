@@ -19,10 +19,13 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from app.routes.auth import router as auth_router
+
 
 from app.database import SessionLocal
 from app.models import Vehicle, VehicleImage
 
+from app.routes.auth import router as auth_router
 
 # --------------------------------------------------
 # APPLICATION
@@ -33,6 +36,8 @@ app = FastAPI(
     description="New Zealand Automotive Marketplace API",
     version="1.0.0",
 )
+
+app.include_router(auth_router)
 
 app.add_middleware(
     CORSMiddleware,
