@@ -12,7 +12,7 @@ export default function Navbar() {
           REV<span className="text-blue-500">V</span>
         </Link>
 
-        <div className="flex items-center gap-5 text-sm font-medium sm:gap-8">
+        <div className="flex flex-wrap items-center gap-4 text-sm font-medium sm:gap-7">
           <Link
             href="/#explore"
             className="transition hover:text-blue-400"
@@ -21,8 +21,15 @@ export default function Navbar() {
           </Link>
 
           <Link
+            href="/my-listings"
+            className="transition hover:text-blue-400"
+          >
+            My Listings
+          </Link>
+
+          <Link
             href="/sell"
-            className="rounded-lg bg-blue-600 px-5 py-2.5 font-semibold text-white transition hover:bg-blue-500"
+            className="rounded-lg bg-blue-600 px-5 py-2.5 font-semibold transition hover:bg-blue-500"
           >
             Sell Your Car
           </Link>
