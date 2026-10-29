@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.routes.auth import router as auth_router
 
 
+
 from app.database import SessionLocal
 from app.models import Vehicle, VehicleImage
 
@@ -39,6 +40,7 @@ app = FastAPI(
 
 app.include_router(auth_router)
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -47,9 +49,11 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
     ],
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type"],
 )
+
 
 
 # --------------------------------------------------
