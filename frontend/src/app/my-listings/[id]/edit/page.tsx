@@ -2,10 +2,9 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import {
   useEffect,
-  useRef,
   useState,
   type FormEvent,
 } from "react";
@@ -20,9 +19,10 @@ type Vehicle = {
   price_nzd: number;
   mileage_km: number;
   location: string;
+  owner_id: number | null;
 };
 
-type VehicleForm = {
+type FormFields = {
   make: string;
   model: string;
   year: string;
@@ -31,245 +31,196 @@ type VehicleForm = {
   location: string;
 };
 
-const inputClass =
-  "mt-2 w-full rounded-xl border border-white/10 bg-[#111c2d] px-4 py-3 text-white outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500";
-
-const locations = [
-  "Auckland",
-  "Wellington",
-  "Christchurch",
-  "Hamilton",
-  "Tauranga",
-  "Dunedin",
-  "Queenstown",
-  "Rotorua",
-  "Napier",
-  "Nelson",
-  "Palmerston North",
-  "New Plymouth",
-  "Other",
-];
+const inputStyle =
+  "mt-2 w-full rounded-xl border border-white/10 bg-[#111c2d] px-4 py-3 text-white outline-none focus:border-blue-500";
 
 export default function EditListingPage() {
-  const params = useParams<{ id: string }>();
-  const router = useRouter();
-  const id = params.id;
+  const { id } = useParams<{ id: string }>();
 
-  const savingRef = useRef(false);
-
-  const [form, setForm] = useState<VehicleForm | null>(null);
+  const [form, setForm] = useState<FormFields | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const [allowed, setAllowed] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
+    let active = true;
 
-    async function loadVehicle() {
+    async function load() {
       try {
-        setLoading(true);
-        setError("");
+        const [userResponse, carResponse] = await Promise.all([
+          fetch(`${API}/api/v1/auth/me`, {
+            credentials: "include",
+            cache: "no-store",
+          }),
+          fetch(`${API}/api/v1/cars/${id}`, {
+            cache: "no-store",
+          }),
+        ]);
 
-        const response = await fetch(
-          `${API}/api/v1/cars/${id}`,
-          { cache: "no-store" }
-        );
+        if (!userResponse.ok) {
+          throw new Error("Please log in first.");
+        }
 
-        if (!response.ok) {
+        if (!carResponse.ok) {
+          throw new Error("Vehicle not found.");
+        }
+
+        const user: {
+          id: number;
+          role: string;
+        } = await userResponse.json();
+
+        const car: Vehicle = await carResponse.json();
+
+        if (user.role !== "admin" && car.owner_id !== user.id) {
           throw new Error(
-            response.status === 404
-              ? "Vehicle not found."
-              : "Unable to load vehicle details."
+            "You don't have permission to edit this vehicle."
           );
         }
 
-        const vehicle: Vehicle = await response.json();
+        if (!active) return;
 
-        if (!cancelled) {
-          setForm({
-            make: vehicle.make,
-            model: vehicle.model,
-            year: String(vehicle.year),
-            price_nzd: String(vehicle.price_nzd),
-            mileage_km: String(vehicle.mileage_km),
-            location: vehicle.location,
-          });
-        }
+        setAllowed(true);
+        setForm({
+          make: car.make,
+          model: car.model,
+          year: String(car.year),
+          price_nzd: String(car.price_nzd),
+          mileage_km: String(car.mileage_km),
+          location: car.location,
+        });
       } catch (err) {
-        if (!cancelled) {
+        if (active) {
           setError(
             err instanceof Error
               ? err.message
-              : "Something went wrong."
+              : "Unable to load listing."
           );
         }
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (active) setLoading(false);
       }
     }
 
-    if (/^\d+$/.test(id)) {
-      void loadVehicle();
-    } else {
-      setError("Invalid vehicle ID.");
-      setLoading(false);
-    }
+    void load();
 
     return () => {
-      cancelled = true;
+      active = false;
     };
   }, [id]);
 
-  function updateField(
-    field: keyof VehicleForm,
-    value: string
-  ) {
+  function update(key: keyof FormFields, value: string) {
     setForm((current) =>
       current
         ? {
             ...current,
-            [field]: value,
+            [key]: value,
           }
         : current
     );
-
-    setError("");
-    setSuccess("");
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!form || savingRef.current) return;
+    if (!form || saving) return;
 
-    const make = form.make.trim();
-    const model = form.model.trim();
-    const location = form.location.trim();
-
-    // Keep number inputs as strings while editing.
-    // Only convert them when the form is submitted.
     const year = Number(form.year);
     const price = Number(form.price_nzd);
     const mileage = Number(form.mileage_km);
 
     if (
-      !make ||
-      !model ||
-      !location ||
-      form.year.trim() === "" ||
-      form.price_nzd.trim() === "" ||
-      form.mileage_km.trim() === ""
+      !form.make.trim() ||
+      !form.model.trim() ||
+      !form.location.trim() ||
+      !form.year ||
+      !form.price_nzd ||
+      !form.mileage_km
     ) {
-      setError("Please complete all required fields.");
+      setError("Please complete all fields.");
       return;
     }
 
     if (
       !Number.isInteger(year) ||
       year < 1900 ||
-      year > new Date().getFullYear() + 1
-    ) {
-      setError("Please enter a valid vehicle year.");
-      return;
-    }
-
-    if (
+      year > 2100 ||
       !Number.isSafeInteger(price) ||
-      price <= 0
-    ) {
-      setError("The asking price must be greater than $0.");
-      return;
-    }
-
-    if (
+      price <= 0 ||
       !Number.isSafeInteger(mileage) ||
       mileage < 0
     ) {
-      setError("Please enter a valid mileage.");
+      setError("Please enter valid vehicle information.");
       return;
     }
 
-    savingRef.current = true;
     setSaving(true);
     setError("");
-    setSuccess("");
 
     try {
       const response = await fetch(
         `${API}/api/v1/cars/${id}`,
         {
           method: "PATCH",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            make,
-            model,
+            make: form.make.trim(),
+            model: form.model.trim(),
             year,
             price_nzd: price,
             mileage_km: mileage,
-            location,
+            location: form.location.trim(),
           }),
         }
       );
 
-      if (!response.ok) {
-        const details = await response
-          .json()
-          .catch(() => null);
+      if (response.status === 401) {
+        throw new Error("Your session expired. Please log in.");
+      }
 
+      if (response.status === 403) {
         throw new Error(
-          typeof details?.detail === "string"
-            ? details.detail
-            : "Unable to save vehicle changes."
+          "You don't have permission to edit this listing."
         );
       }
 
-      setSuccess("Vehicle updated successfully!");
+      if (!response.ok) {
+        throw new Error("Unable to save changes.");
+      }
 
-      router.push(`/cars/${id}`);
-      router.refresh();
+      window.location.assign(`/cars/${id}`);
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Something went wrong."
+        err instanceof Error ? err.message : "Save failed."
       );
-    } finally {
-      savingRef.current = false;
       setSaving(false);
     }
   }
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#080e18] text-white">
-        <p className="text-zinc-400">
-          Loading vehicle details...
-        </p>
+      <main className="min-h-screen bg-[#080e18] p-16 text-center text-white">
+        Loading listing...
       </main>
     );
   }
 
-  if (!form) {
+  if (!allowed || !form) {
     return (
       <main className="min-h-screen bg-[#080e18] px-6 py-20 text-center text-white">
-        <h1 className="text-2xl font-bold">
-          Unable to edit vehicle
+        <h1 className="text-3xl font-bold">
+          Unable to Edit Listing
         </h1>
-
-        <p className="mt-4 text-red-400">
-          {error || "Vehicle not found."}
-        </p>
-
+        <p className="mt-4 text-red-300">{error}</p>
         <Link
           href="/my-listings"
-          className="mt-8 inline-block text-blue-400 hover:text-blue-300"
+          className="mt-6 inline-block text-blue-400"
         >
-          ← Back to Development Listings
+          Back to My Listings
         </Link>
       </main>
     );
@@ -280,285 +231,104 @@ export default function EditListingPage() {
       <div className="mx-auto max-w-3xl">
         <Link
           href="/my-listings"
-          className="text-sm font-medium text-blue-400 transition hover:text-blue-300"
+          className="text-sm text-blue-400"
         >
-          ← Back to Development Listings
+          ← Back to My Listings
         </Link>
 
-        <p className="mt-12 text-xs font-bold uppercase tracking-[0.25em] text-blue-400">
-          REVV / LISTING MANAGEMENT
+        <p className="mt-12 text-xs font-bold uppercase tracking-widest text-blue-400">
+          REVV / MANAGE LISTING
         </p>
 
-        <h1 className="mt-4 text-4xl font-black tracking-tight md:text-5xl">
-          Edit Your Vehicle
+        <h1 className="mt-4 text-4xl font-black">
+          Edit Vehicle
         </h1>
 
-        <p className="mt-4 text-zinc-400">
-          Update listing #{id}. Your changes will
-          be saved directly to PostgreSQL.
+        <p className="mt-3 text-zinc-400">
+          Update listing #{id}.
         </p>
 
-        <form
-          onSubmit={save}
-          className="mt-10 space-y-8"
-        >
-          {/* VEHICLE DETAILS */}
+        <form onSubmit={save} className="mt-10 space-y-8">
           <section className="rounded-2xl border border-white/10 bg-[#0d1726] p-6 md:p-8">
-            <p className="text-xs font-bold uppercase tracking-widest text-blue-400">
-              01 / VEHICLE DETAILS
-            </p>
-
-            <h2 className="mt-3 text-2xl font-bold">
-              Vehicle Information
+            <h2 className="text-2xl font-bold">
+              Vehicle Details
             </h2>
 
-            <div className="mt-8 grid gap-6 md:grid-cols-2">
-              <div>
-                <label
-                  htmlFor="edit-make"
-                  className="block text-sm font-medium text-zinc-300"
-                >
-                  Make *
-                </label>
+            <div className="mt-7 grid gap-6 md:grid-cols-2">
+              {(
+                [
+                  ["make", "Make"],
+                  ["model", "Model"],
+                  ["year", "Year"],
+                  ["mileage_km", "Mileage (km)"],
+                  ["price_nzd", "Asking Price (NZD)"],
+                  ["location", "Location"],
+                ] as const
+              ).map(([field, label]) => {
+                const numeric = [
+                  "year",
+                  "mileage_km",
+                  "price_nzd",
+                ].includes(field);
 
-                <input
-                  id="edit-make"
-                  type="text"
-                  required
-                  maxLength={100}
-                  value={form.make}
-                  onChange={(event) =>
-                    updateField("make", event.target.value)
-                  }
-                  className={inputClass}
-                />
-              </div>
-
-              <div>
-                <label
-                  htmlFor="edit-model"
-                  className="block text-sm font-medium text-zinc-300"
-                >
-                  Model *
-                </label>
-
-                <input
-                  id="edit-model"
-                  type="text"
-                  required
-                  maxLength={100}
-                  value={form.model}
-                  onChange={(event) =>
-                    updateField("model", event.target.value)
-                  }
-                  className={inputClass}
-                />
-              </div>
-
-              <div>
-                <label
-                  htmlFor="edit-year"
-                  className="block text-sm font-medium text-zinc-300"
-                >
-                  Year *
-                </label>
-
-                <input
-                  id="edit-year"
-                  type="number"
-                  required
-                  min={1900}
-                  max={new Date().getFullYear() + 1}
-                  step={1}
-                  value={form.year}
-                  onChange={(event) =>
-                    updateField("year", event.target.value)
-                  }
-                  placeholder="e.g. 2024"
-                  className={inputClass}
-                />
-              </div>
-
-              <div>
-                <label
-                  htmlFor="edit-mileage"
-                  className="block text-sm font-medium text-zinc-300"
-                >
-                  Mileage (km) *
-                </label>
-
-                <input
-                  id="edit-mileage"
-                  type="number"
-                  required
-                  min={0}
-                  step={1}
-                  value={form.mileage_km}
-                  onChange={(event) =>
-                    updateField(
-                      "mileage_km",
-                      event.target.value
-                    )
-                  }
-                  placeholder="e.g. 50000"
-                  className={inputClass}
-                />
-              </div>
+                return (
+                  <label
+                    key={field}
+                    className="block text-sm text-zinc-300"
+                  >
+                    {label} *
+                    <input
+                      type={numeric ? "number" : "text"}
+                      required
+                      min={
+                        field === "year"
+                          ? 1900
+                          : field === "price_nzd"
+                            ? 1
+                            : numeric
+                              ? 0
+                              : undefined
+                      }
+                      max={field === "year" ? 2100 : undefined}
+                      maxLength={numeric ? undefined : 100}
+                      step={numeric ? 1 : undefined}
+                      value={form[field]}
+                      onChange={(e) =>
+                        update(field, e.target.value)
+                      }
+                      className={inputStyle}
+                    />
+                  </label>
+                );
+              })}
             </div>
           </section>
 
-          {/* PRICING AND LOCATION */}
-          <section className="rounded-2xl border border-white/10 bg-[#0d1726] p-6 md:p-8">
-            <p className="text-xs font-bold uppercase tracking-widest text-blue-400">
-              02 / LISTING DETAILS
-            </p>
-
-            <h2 className="mt-3 text-2xl font-bold">
-              Price and Location
-            </h2>
-
-            <div className="mt-8 grid gap-6 md:grid-cols-2">
-              <div>
-                <label
-                  htmlFor="edit-price"
-                  className="block text-sm font-medium text-zinc-300"
-                >
-                  Asking Price (NZD) *
-                </label>
-
-                <input
-                  id="edit-price"
-                  type="number"
-                  required
-                  min={1}
-                  step={1}
-                  value={form.price_nzd}
-                  onChange={(event) =>
-                    updateField(
-                      "price_nzd",
-                      event.target.value
-                    )
-                  }
-                  placeholder="e.g. 20000"
-                  className={inputClass}
-                />
-
-                <p className="mt-2 text-xs text-zinc-500">
-                  Enter the amount without commas or
-                  a dollar sign.
-                </p>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="edit-location"
-                  className="block text-sm font-medium text-zinc-300"
-                >
-                  Location *
-                </label>
-
-                <select
-                  id="edit-location"
-                  required
-                  value={form.location}
-                  onChange={(event) =>
-                    updateField(
-                      "location",
-                      event.target.value
-                    )
-                  }
-                  className={inputClass}
-                >
-                  {!locations.includes(form.location) &&
-                    form.location !== "" && (
-                      <option value={form.location}>
-                        {form.location}
-                      </option>
-                    )}
-
-                  <option value="">
-                    Select location
-                  </option>
-
-                  {locations.map((city) => (
-                    <option key={city} value={city}>
-                      {city}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </section>
-
-          {/* PHOTO MANAGEMENT */}
-          <section className="rounded-2xl border border-white/10 bg-[#0d1726] p-6 md:p-8">
-            <p className="text-xs font-bold uppercase tracking-widest text-blue-400">
-              03 / VEHICLE PHOTOS
-            </p>
-
-            <h2 className="mt-3 text-2xl font-bold">
-              Manage Photos
-            </h2>
-
-            <p className="mt-3 text-sm leading-6 text-zinc-400">
-              Your existing vehicle photos will remain
-              attached when you update the listing.
-              Adding, removing and changing cover photos
-              will be available through seller account
-              management in a future update.
-            </p>
-
-            <Link
-              href={`/cars/${id}`}
-              className="mt-5 inline-block text-sm font-semibold text-blue-400 hover:text-blue-300"
-            >
-              View current vehicle photos →
-            </Link>
-          </section>
-
-          {/* ERROR / SUCCESS */}
           {error && (
-            <div
+            <p
               role="alert"
-              className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300"
+              className="rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-red-300"
             >
               {error}
-            </div>
+            </p>
           )}
 
-          {success && (
-            <div
-              role="status"
-              className="rounded-xl border border-green-500/30 bg-green-500/10 p-4 text-sm text-green-300"
-            >
-              {success}
-            </div>
-          )}
-
-          {/* ACTIONS */}
-          <div className="flex flex-wrap gap-4">
+          <div className="flex flex-wrap gap-3">
             <button
               type="submit"
               disabled={saving}
-              className="rounded-xl bg-blue-600 px-8 py-4 font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-xl bg-blue-600 px-8 py-4 font-bold hover:bg-blue-500 disabled:opacity-50"
             >
-              {saving
-                ? "Saving Changes..."
-                : "Save Changes"}
+              {saving ? "Saving..." : "Save Changes"}
             </button>
 
             <Link
               href="/my-listings"
-              className="rounded-xl border border-white/20 px-8 py-4 font-semibold text-white transition hover:bg-white/10"
+              className="rounded-xl border border-white/20 px-8 py-4 font-semibold"
             >
               Cancel
             </Link>
           </div>
-
-          <p className="text-xs text-zinc-500">
-            Development mode: Listing edits are not
-            restricted by seller accounts yet.
-          </p>
         </form>
       </div>
     </main>

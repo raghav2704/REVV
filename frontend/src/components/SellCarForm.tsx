@@ -1,73 +1,59 @@
 
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 
-const API_URL = "http://127.0.0.1:8000";
-const MAX_PHOTOS = 10;
-const MAX_SIZE = 5 * 1024 * 1024;
+const API = "http://127.0.0.1:8000";
+const MAX_FILES = 10;
+const MAX_BYTES = 5 * 1024 * 1024;
 
-type VehicleForm = {
+type FormFields = {
   make: string;
   model: string;
   year: string;
-  mileage_km: string;
   price_nzd: string;
+  mileage_km: string;
   location: string;
 };
 
-type SelectedPhoto = {
+type Photo = {
   id: string;
   file: File;
   preview: string;
 };
 
-const initialForm: VehicleForm = {
-  make: "",
-  model: "",
-  year: "",
-  mileage_km: "",
-  price_nzd: "",
-  location: "",
-};
-
-const locations = [
-  "Auckland",
-  "Wellington",
-  "Christchurch",
-  "Hamilton",
-  "Tauranga",
-  "Dunedin",
-  "Queenstown",
-  "Rotorua",
-  "Napier",
-  "Nelson",
-  "Palmerston North",
-  "New Plymouth",
-  "Other",
-];
-
 const inputClass =
-  "w-full rounded-xl border border-white/10 bg-[#111c2d] px-4 py-3.5 text-white outline-none transition placeholder:text-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500";
-
-const labelClass =
-  "mb-2 block text-sm font-medium text-slate-300";
+  "mt-2 w-full rounded-xl border border-white/10 bg-[#111c2d] px-4 py-3 text-white outline-none focus:border-blue-500";
 
 export default function SellCarForm() {
   const router = useRouter();
 
-  const submittingRef = useRef(false);
-  const photosRef = useRef<SelectedPhoto[]>([]);
+  const [form, setForm] = useState<FormFields>({
+    make: "",
+    model: "",
+    year: "",
+    price_nzd: "",
+    mileage_km: "",
+    location: "Auckland",
+  });
 
-  const [form, setForm] = useState(initialForm);
-  const [photos, setPhotos] = useState<SelectedPhoto[]>([]);
+  const [photos, setPhotos] = useState<Photo[]>([]);
   const [coverId, setCoverId] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [status, setStatus] = useState("");
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [createdId, setCreatedId] = useState<number | null>(null);
-  const [uploadCompleted, setUploadCompleted] = useState(false);
+  const [accountLoading, setAccountLoading] = useState(true);
+  const [signedIn, setSignedIn] = useState(false);
+
+  const createdId = useRef<number | null>(null);
+  const photosRef = useRef<Photo[]>([]);
+  const photoInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     photosRef.current = photos;
@@ -75,17 +61,42 @@ export default function SellCarForm() {
 
   useEffect(() => {
     return () => {
-      photosRef.current.forEach((photo) => {
-        URL.revokeObjectURL(photo.preview);
-      });
+      photosRef.current.forEach((photo) =>
+        URL.revokeObjectURL(photo.preview)
+      );
     };
   }, []);
 
-  function updateField(
-    field: keyof VehicleForm,
-    value: string
-  ) {
-    if (createdId !== null) return;
+  useEffect(() => {
+    let active = true;
+
+    async function checkAccount() {
+      try {
+        const response = await fetch(
+          `${API}/api/v1/auth/me`,
+          {
+            credentials: "include",
+            cache: "no-store",
+          }
+        );
+
+        if (active) setSignedIn(response.ok);
+      } catch {
+        if (active) setSignedIn(false);
+      } finally {
+        if (active) setAccountLoading(false);
+      }
+    }
+
+    void checkAccount();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  function update(field: keyof FormFields, value: string) {
+    if (createdId.current !== null) return;
 
     setForm((current) => ({
       ...current,
@@ -93,20 +104,18 @@ export default function SellCarForm() {
     }));
   }
 
-  function handlePhotos(
-    event: React.ChangeEvent<HTMLInputElement>
-  ) {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = "";
+  function addPhotos(files: FileList | null) {
+    if (!files) return;
 
-    if (files.length === 0) return;
+    const incoming = Array.from(files);
+    const remaining = MAX_FILES - photos.length;
 
-    if (photos.length + files.length > MAX_PHOTOS) {
-      setError("You can upload a maximum of 10 photos.");
+    if (incoming.length > remaining) {
+      setError(`You can upload a maximum of ${MAX_FILES} photos.`);
       return;
     }
 
-    for (const file of files) {
+    for (const file of incoming) {
       if (
         !["image/jpeg", "image/png", "image/webp"].includes(
           file.type
@@ -116,92 +125,96 @@ export default function SellCarForm() {
         return;
       }
 
-      if (file.size > MAX_SIZE) {
-        setError("Each photo must be 5 MB or smaller.");
+      if (file.size > MAX_BYTES) {
+        setError("Each photo must be 5 MB or less.");
         return;
       }
     }
 
-    const newPhotos = files.map((file) => ({
+    const additions = incoming.map((file) => ({
       id: crypto.randomUUID(),
       file,
       preview: URL.createObjectURL(file),
     }));
 
-    setPhotos((current) => [...current, ...newPhotos]);
-    setCoverId((current) => current ?? newPhotos[0].id);
+    setPhotos((current) => [...current, ...additions]);
+
+    if (!coverId && additions.length > 0) {
+      setCoverId(additions[0].id);
+    }
+
     setError("");
+
+    if (photoInput.current) {
+      photoInput.current.value = "";
+    }
   }
 
   function removePhoto(id: string) {
-    const removed = photos.find((photo) => photo.id === id);
+    const photo = photos.find((item) => item.id === id);
 
-    if (removed) {
-      URL.revokeObjectURL(removed.preview);
-    }
+    if (photo) URL.revokeObjectURL(photo.preview);
 
-    const updated = photos.filter((photo) => photo.id !== id);
-    setPhotos(updated);
+    const remaining = photos.filter((item) => item.id !== id);
+
+    setPhotos(remaining);
 
     if (coverId === id) {
-      setCoverId(updated[0]?.id ?? null);
+      setCoverId(remaining[0]?.id ?? null);
     }
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function publish(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (submittingRef.current || uploadCompleted) return;
+    if (saving) return;
 
-    setError("");
+    if (!signedIn) {
+      setError("Please log in before creating a listing.");
+      return;
+    }
 
     const year = Number(form.year);
     const price = Number(form.price_nzd);
     const mileage = Number(form.mileage_km);
 
-    if (
-      !form.make.trim() ||
-      !form.model.trim() ||
-      !form.location ||
-      !form.year ||
-      !form.price_nzd ||
-      !form.mileage_km
-    ) {
-      setError("Please complete all required fields.");
-      return;
+    if (createdId.current === null) {
+      if (
+        !form.make.trim() ||
+        !form.model.trim() ||
+        !form.location.trim() ||
+        !form.year ||
+        !form.price_nzd ||
+        !form.mileage_km
+      ) {
+        setError("Please complete all vehicle details.");
+        return;
+      }
+
+      if (
+        !Number.isInteger(year) ||
+        year < 1900 ||
+        year > 2100 ||
+        !Number.isSafeInteger(price) ||
+        price <= 0 ||
+        !Number.isSafeInteger(mileage) ||
+        mileage < 0
+      ) {
+        setError("Please enter valid year, price and mileage.");
+        return;
+      }
     }
 
-    if (
-      !Number.isInteger(year) ||
-      year < 1900 ||
-      year > new Date().getFullYear() + 1
-    ) {
-      setError("Enter a valid vehicle year.");
-      return;
-    }
-
-    if (
-      !Number.isSafeInteger(price) ||
-      price <= 0 ||
-      !Number.isSafeInteger(mileage) ||
-      mileage < 0
-    ) {
-      setError("Enter a valid price and mileage.");
-      return;
-    }
-
-    submittingRef.current = true;
-    setSubmitting(true);
+    setSaving(true);
+    setError("");
 
     try {
-      let vehicleId = createdId;
+      let carId = createdId.current;
 
-      // 1. Create the vehicle only once.
-      if (vehicleId === null) {
-        setStatus("Saving vehicle details...");
-
-        const response = await fetch(`${API_URL}/api/v1/cars`, {
+      if (carId === null) {
+        const response = await fetch(`${API}/api/v1/cars`, {
           method: "POST",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
           },
@@ -211,27 +224,26 @@ export default function SellCarForm() {
             year,
             price_nzd: price,
             mileage_km: mileage,
-            location: form.location,
+            location: form.location.trim(),
           }),
         });
 
         if (!response.ok) {
-          throw new Error("Could not save the vehicle.");
+          if (response.status === 401) {
+            throw new Error("Your session expired. Please log in again.");
+          }
+
+          throw new Error("Unable to create vehicle listing.");
         }
 
-        const created: { id: number } = await response.json();
+        const car: { id: number } = await response.json();
 
-        vehicleId = created.id;
-        setCreatedId(vehicleId);
+        carId = car.id;
+        createdId.current = carId;
       }
 
-      // 2. Upload the selected photos.
       if (photos.length > 0) {
-        setStatus("Uploading vehicle photos...");
-
-        // Backend automatically makes the first image
-        // the cover, so send the selected cover first.
-        const orderedPhotos = [...photos].sort((a, b) => {
+        const ordered = [...photos].sort((a, b) => {
           if (a.id === coverId) return -1;
           if (b.id === coverId) return 1;
           return 0;
@@ -239,298 +251,187 @@ export default function SellCarForm() {
 
         const data = new FormData();
 
-        orderedPhotos.forEach((photo) => {
+        ordered.forEach((photo) => {
           data.append("files", photo.file);
         });
 
         const response = await fetch(
-          `${API_URL}/api/v1/cars/${vehicleId}/images`,
+          `${API}/api/v1/cars/${carId}/images`,
           {
             method: "POST",
+            credentials: "include",
             body: data,
           }
         );
 
         if (!response.ok) {
-          const details = await response.json().catch(() => null);
-
           throw new Error(
-            typeof details?.detail === "string"
-              ? details.detail
-              : "Photo upload failed. The vehicle was saved."
+            "Listing created, but photos were not uploaded. " +
+              "Check your connection and retry. " +
+              "Do not refresh this page before retrying."
           );
         }
       }
 
-      // 3. Open the completed listing.
-      setStatus("Listing created successfully!");
-      setUploadCompleted(true);
-
-      router.push(`/cars/${vehicleId}`);
-      router.refresh();
+      window.location.assign(`/cars/${carId}`);
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Something went wrong."
+          : "Unable to publish listing."
       );
-      setStatus("");
-      setSubmitting(false);
-      submittingRef.current = false;
+      setSaving(false);
     }
   }
 
-  return (
-    <form onSubmit={handleSubmit} className="space-y-8">
-      {/* VEHICLE DETAILS */}
-      <section className="rounded-2xl border border-white/10 bg-[#0d1726] p-6 md:p-8">
-        <p className="text-xs font-bold tracking-widest text-blue-400">
-          01 / VEHICLE DETAILS
-        </p>
+  if (accountLoading) {
+    return (
+      <div className="rounded-2xl bg-[#0d1726] p-8 text-white">
+        Checking your REVV account...
+      </div>
+    );
+  }
 
-        <h2 className="mt-3 text-2xl font-bold text-white">
+  if (!signedIn) {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-[#0d1726] p-8 text-white">
+        <h2 className="text-2xl font-bold">
+          Login required
+        </h2>
+        <p className="mt-3 text-zinc-400">
+          Sign in to your REVV account to sell a car.
+        </p>
+        <Link
+          href="/login"
+          className="mt-6 inline-block rounded-xl bg-blue-600 px-6 py-3 font-semibold"
+        >
+          Sign In
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={publish} className="space-y-8 text-white">
+      <section className="rounded-2xl border border-white/10 bg-[#0d1726] p-6 md:p-8">
+        <p className="text-xs font-bold uppercase tracking-widest text-blue-400">
+          01 / VEHICLE INFORMATION
+        </p>
+        <h2 className="mt-3 text-2xl font-bold">
           Tell us about your car
         </h2>
 
-        <div className="mt-8 grid gap-6 md:grid-cols-2">
-          {([
-            ["make", "Make", "BMW"],
-            ["model", "Model", "320i"],
-          ] as const).map(([key, label, placeholder]) => (
-            <div key={key}>
-              <label htmlFor={key} className={labelClass}>
+        <div className="mt-7 grid gap-6 md:grid-cols-2">
+          {(
+            [
+              ["make", "Make", "BMW"],
+              ["model", "Model", "320i"],
+              ["year", "Year", "2024"],
+              ["mileage_km", "Mileage (km)", "20000"],
+              ["price_nzd", "Asking Price (NZD)", "59990"],
+              ["location", "Location", "Auckland"],
+            ] as const
+          ).map(([field, label, placeholder]) => {
+            const numeric = [
+              "year",
+              "mileage_km",
+              "price_nzd",
+            ].includes(field);
+
+            return (
+              <label key={field} className="block text-sm text-zinc-300">
                 {label} *
+                <input
+                  type={numeric ? "number" : "text"}
+                  required
+                  disabled={createdId.current !== null}
+                  min={
+                    field === "year"
+                      ? 1900
+                      : field === "price_nzd"
+                        ? 1
+                        : numeric
+                          ? 0
+                          : undefined
+                  }
+                  max={field === "year" ? 2100 : undefined}
+                  step={numeric ? 1 : undefined}
+                  maxLength={numeric ? undefined : 100}
+                  placeholder={placeholder}
+                  value={form[field]}
+                  onChange={(e) => update(field, e.target.value)}
+                  className={inputClass}
+                />
               </label>
-              <input
-                id={key}
-                required
-                maxLength={100}
-                disabled={submitting || createdId !== null}
-                value={form[key]}
-                onChange={(e) => updateField(key, e.target.value)}
-                placeholder={placeholder}
-                className={inputClass}
-              />
-            </div>
-          ))}
-
-          <div>
-            <label htmlFor="year" className={labelClass}>
-              Year *
-            </label>
-            <input
-              id="year"
-              type="number"
-              min="1900"
-              max={new Date().getFullYear() + 1}
-              step="1"
-              required
-              disabled={submitting || createdId !== null}
-              value={form.year}
-              onChange={(e) => updateField("year", e.target.value)}
-              placeholder="2024"
-              className={inputClass}
-            />
-          </div>
-
-          <div>
-            <label htmlFor="mileage" className={labelClass}>
-              Mileage (km) *
-            </label>
-            <input
-              id="mileage"
-              type="number"
-              min="0"
-              step="1"
-              required
-              disabled={submitting || createdId !== null}
-              value={form.mileage_km}
-              onChange={(e) =>
-                updateField("mileage_km", e.target.value)
-              }
-              placeholder="18000"
-              className={inputClass}
-            />
-          </div>
+            );
+          })}
         </div>
       </section>
 
-      {/* LISTING DETAILS */}
       <section className="rounded-2xl border border-white/10 bg-[#0d1726] p-6 md:p-8">
-        <p className="text-xs font-bold tracking-widest text-blue-400">
-          02 / LISTING DETAILS
+        <p className="text-xs font-bold uppercase tracking-widest text-blue-400">
+          02 / PHOTOS
         </p>
 
-        <h2 className="mt-3 text-2xl font-bold text-white">
-          Price and location
+        <h2 className="mt-3 text-2xl font-bold">
+          Show off your vehicle
         </h2>
 
-        <div className="mt-8 grid gap-6 md:grid-cols-2">
-          <div>
-            <label htmlFor="price" className={labelClass}>
-              Asking price (NZD) *
-            </label>
-            <input
-              id="price"
-              type="number"
-              min="1"
-              step="1"
-              required
-              disabled={submitting || createdId !== null}
-              value={form.price_nzd}
-              onChange={(e) =>
-                updateField("price_nzd", e.target.value)
-              }
-              placeholder="59990"
-              className={inputClass}
-            />
-          </div>
-
-          <div>
-            <label htmlFor="location" className={labelClass}>
-              Location *
-            </label>
-            <select
-              id="location"
-              required
-              disabled={submitting || createdId !== null}
-              value={form.location}
-              onChange={(e) =>
-                updateField("location", e.target.value)
-              }
-              className={inputClass}
-            >
-              <option value="">Select location</option>
-              {locations.map((city) => (
-                <option key={city} value={city}>
-                  {city}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </section>
-
-      {/* VEHICLE PHOTOS */}
-      <section className="rounded-2xl border border-white/10 bg-[#0d1726] p-6 md:p-8">
-        <p className="text-xs font-bold tracking-widest text-blue-400">
-          03 / VEHICLE PHOTOS
+        <p className="mt-3 text-sm text-zinc-400">
+          Add up to 10 photos. Choose the one to use as the cover.
         </p>
 
-        <h2 className="mt-3 text-2xl font-bold text-white">
-          Show off your car
-        </h2>
-
-        <p className="mt-2 text-sm text-slate-400">
-          Select up to 10 photos (JPG, PNG or WEBP).
-          Maximum 5 MB each.
-        </p>
-
-        <label
-          htmlFor="vehicle-photos"
-          className="mt-7 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-blue-500/30 bg-[#111c2d] px-6 py-12 text-center transition hover:border-blue-400"
-        >
-          <span className="text-4xl">📸</span>
-          <span className="mt-4 font-semibold text-white">
-            Select vehicle photos
-          </span>
-          <span className="mt-2 text-sm text-slate-400">
-            Choose photos from your Mac
-          </span>
-          <input
-            id="vehicle-photos"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            multiple
-            disabled={submitting}
-            onChange={handlePhotos}
-            className="sr-only"
-          />
-        </label>
+        <input
+          ref={photoInput}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          multiple
+          onChange={(e) => addPhotos(e.target.files)}
+          className="mt-6 block w-full rounded-xl border border-dashed border-white/20 p-5 text-sm text-zinc-300 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:text-white"
+        />
 
         {photos.length > 0 && (
-          <div className="mt-8">
-            <div className="mb-4 flex justify-between">
-              <p className="font-semibold text-white">
-                Selected Photos
-              </p>
-              <span className="text-sm text-slate-400">
-                {photos.length} / 10
-              </span>
-            </div>
+          <div className="mt-7 grid gap-4 sm:grid-cols-2 md:grid-cols-3">
+            {photos.map((photo) => (
+              <div
+                key={photo.id}
+                className="overflow-hidden rounded-xl border border-white/10 bg-[#111c2d]"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={photo.preview}
+                  alt="Vehicle upload preview"
+                  className="h-40 w-full object-cover"
+                />
 
-            <p className="mb-5 text-sm text-slate-400">
-              Click "Set as cover" to choose the main
-              marketplace photo.
-            </p>
+                <div className="space-y-2 p-3">
+                  <button
+                    type="button"
+                    onClick={() => setCoverId(photo.id)}
+                    className={`w-full rounded-lg px-3 py-2 text-xs font-bold ${
+                      coverId === photo.id
+                        ? "bg-blue-600"
+                        : "bg-white/10"
+                    }`}
+                  >
+                    {coverId === photo.id
+                      ? "Cover Photo ✓"
+                      : "Set as Cover"}
+                  </button>
 
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-              {photos.map((photo) => (
-                <div
-                  key={photo.id}
-                  className="overflow-hidden rounded-xl border border-white/10 bg-[#111c2d]"
-                >
-                  {/* Preview of locally selected file */}
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={photo.preview}
-                    alt={photo.file.name}
-                    className="aspect-[4/3] w-full object-cover"
-                  />
-
-                  <div className="space-y-3 p-3">
-                    <p className="truncate text-xs text-slate-300">
-                      {photo.file.name}
-                    </p>
-
-                    {coverId === photo.id ? (
-                      <span className="block text-xs font-semibold text-blue-400">
-                        ★ Cover Photo
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={submitting}
-                        onClick={() => setCoverId(photo.id)}
-                        className="text-xs font-semibold text-white hover:text-blue-400"
-                      >
-                        Set as cover
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={() => removePhoto(photo.id)}
-                      className="block text-xs text-red-400 hover:text-red-300"
-                    >
-                      Remove photo
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removePhoto(photo.id)}
+                    className="w-full rounded-lg border border-red-500/30 px-3 py-2 text-xs text-red-300"
+                  >
+                    Remove
+                  </button>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
         )}
       </section>
-
-      {/* DEVELOPMENT NOTICE */}
-      <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-5 text-sm leading-6 text-blue-100">
-        <strong>REVV Development Mode:</strong> This creates
-        a demonstration listing. User accounts and
-        seller verification will be added later.
-      </div>
-
-      {createdId !== null && !uploadCompleted && error && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
-          Vehicle #{createdId} has already been saved.
-          Retrying will upload the photos to that listing,
-          rather than creating another vehicle.
-          If the previous upload may have succeeded,
-          check the listing before retrying to avoid
-          duplicate photos.
-        </div>
-      )}
 
       {error && (
         <div
@@ -541,23 +442,26 @@ export default function SellCarForm() {
         </div>
       )}
 
-      {status && (
-        <p role="status" className="text-center text-sm text-blue-300">
-          {status}
-        </p>
-      )}
+      <div className="flex flex-wrap gap-4">
+        <button
+          type="submit"
+          disabled={saving}
+          className="rounded-xl bg-blue-600 px-8 py-4 font-bold hover:bg-blue-500 disabled:opacity-50"
+        >
+          {saving
+            ? "Publishing..."
+            : createdId.current !== null
+              ? "Retry Photo Upload"
+              : "Publish Listing"}
+        </button>
 
-      <button
-        type="submit"
-        disabled={submitting || uploadCompleted}
-        className="w-full rounded-xl bg-blue-600 px-6 py-5 font-bold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {submitting
-          ? "Creating Your Listing..."
-          : createdId !== null
-          ? "Retry Photo Upload"
-          : "Create Demo Listing →"}
-      </button>
+        <Link
+          href="/my-listings"
+          className="rounded-xl border border-white/20 px-8 py-4 font-semibold"
+        >
+          Cancel
+        </Link>
+      </div>
     </form>
   );
 }

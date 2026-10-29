@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 const API = "http://127.0.0.1:8000";
 
-type Vehicle = {
+type Car = {
   id: number;
   make: string;
   model: string;
@@ -14,29 +14,40 @@ type Vehicle = {
   price_nzd: number;
   mileage_km: number;
   location: string;
+  owner_id: number | null;
   cover?: string;
 };
 
 export default function MyListingsPage() {
-  const [cars, setCars] = useState<Vehicle[]>([]);
+  const [cars, setCars] = useState<Car[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [unauthorized, setUnauthorized] = useState(false);
 
   const loadCars = useCallback(async () => {
     try {
       setError("");
+      setUnauthorized(false);
 
-      const response = await fetch(`${API}/api/v1/cars`, {
-        cache: "no-store",
-      });
+      const response = await fetch(
+        `${API}/api/v1/my/cars`,
+        {
+          credentials: "include",
+          cache: "no-store",
+        }
+      );
 
-      if (!response.ok) {
-        throw new Error("Unable to load listings.");
+      if (response.status === 401) {
+        setUnauthorized(true);
+        return;
       }
 
-      const result: { data: Vehicle[] } =
-        await response.json();
+      if (!response.ok) {
+        throw new Error("Unable to load your listings.");
+      }
+
+      const result: { data: Car[] } = await response.json();
 
       const vehicles = await Promise.all(
         result.data.map(async (car) => {
@@ -48,7 +59,7 @@ export default function MyListingsPage() {
 
             if (!imageResponse.ok) return car;
 
-            const imageData: {
+            const data: {
               images: {
                 url: string;
                 is_cover: boolean;
@@ -56,15 +67,12 @@ export default function MyListingsPage() {
             } = await imageResponse.json();
 
             const cover =
-              imageData.images.find(
-                (image) => image.is_cover
-              ) ?? imageData.images[0];
+              data.images.find((image) => image.is_cover) ??
+              data.images[0];
 
             return {
               ...car,
-              cover: cover
-                ? `${API}${cover.url}`
-                : undefined,
+              cover: cover ? `${API}${cover.url}` : undefined,
             };
           } catch {
             return car;
@@ -88,11 +96,11 @@ export default function MyListingsPage() {
     void loadCars();
   }, [loadCars]);
 
-  async function deleteVehicle(car: Vehicle) {
+  async function deleteCar(car: Car) {
     if (deleting !== null) return;
 
     const confirmed = window.confirm(
-      `Permanently delete ${car.year} ${car.make} ${car.model}?\n\nThis will also delete its uploaded photos.`
+      `Permanently delete ${car.year} ${car.make} ${car.model}?\n\nAll its uploaded photos will also be deleted.`
     );
 
     if (!confirmed) return;
@@ -103,13 +111,26 @@ export default function MyListingsPage() {
     try {
       const response = await fetch(
         `${API}/api/v1/cars/${car.id}`,
-        { method: "DELETE" }
+        {
+          method: "DELETE",
+          credentials: "include",
+        }
       );
 
       if (!response.ok) {
-        throw new Error(
-          "Unable to delete this listing."
-        );
+        if (response.status === 403) {
+          throw new Error(
+            "You don't have permission to delete this car."
+          );
+        }
+
+        if (response.status === 401) {
+          throw new Error(
+            "Your session has expired. Please log in again."
+          );
+        }
+
+        throw new Error("Unable to delete listing.");
       }
 
       setCars((current) =>
@@ -117,9 +138,7 @@ export default function MyListingsPage() {
       );
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Deletion failed."
+        err instanceof Error ? err.message : "Delete failed."
       );
     } finally {
       setDeleting(null);
@@ -133,90 +152,100 @@ export default function MyListingsPage() {
       maximumFractionDigits: 0,
     }).format(value);
 
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-[#080e18] p-16 text-center text-white">
+        Loading your listings...
+      </main>
+    );
+  }
+
+  if (unauthorized) {
+    return (
+      <main className="min-h-screen bg-[#080e18] px-6 py-20 text-center text-white">
+        <h1 className="text-3xl font-black">
+          Login Required
+        </h1>
+        <p className="mt-4 text-zinc-400">
+          Sign in to manage your vehicles.
+        </p>
+        <Link
+          href="/login"
+          className="mt-6 inline-block rounded-xl bg-blue-600 px-6 py-3 font-semibold"
+        >
+          Sign In
+        </Link>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-[#f4f6f9] text-zinc-900">
       <section className="bg-[#0b1321] px-6 py-16 text-white">
         <div className="mx-auto max-w-6xl">
-          <p className="text-xs font-bold uppercase tracking-[0.25em] text-blue-400">
-            REVV / LISTING MANAGEMENT
+          <p className="text-xs font-bold uppercase tracking-widest text-blue-400">
+            REVV / SELLER DASHBOARD
           </p>
 
           <h1 className="mt-4 text-4xl font-black md:text-5xl">
-            Development Listings
+            My Listings
           </h1>
 
-          <p className="mt-4 max-w-xl text-zinc-400">
-            View, edit and manage the vehicles stored
-            in your REVV development database.
+          <p className="mt-4 text-zinc-400">
+            Manage your vehicles, pricing and listing details.
           </p>
 
-          <div className="mt-8 flex flex-wrap gap-3">
-            <Link
-              href="/sell"
-              className="rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white hover:bg-blue-500"
-            >
-              + Create Listing
-            </Link>
-
-            <Link
-              href="/#explore"
-              className="rounded-xl border border-white/20 px-6 py-3 text-sm font-semibold hover:bg-white/10"
-            >
-              Explore Marketplace
-            </Link>
-          </div>
+          <Link
+            href="/sell"
+            className="mt-8 inline-block rounded-xl bg-blue-600 px-6 py-3 font-semibold"
+          >
+            + Sell Another Car
+          </Link>
         </div>
       </section>
 
       <section className="mx-auto max-w-6xl px-6 py-12">
-        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+        <div className="mb-8 flex items-center justify-between gap-4">
           <div>
             <h2 className="text-2xl font-bold">
-              Vehicle Inventory
+              Your Vehicles
             </h2>
             <p className="mt-1 text-sm text-zinc-500">
-              {cars.length} vehicles in development
+              {cars.length} listings
             </p>
           </div>
 
           <button
-            type="button"
             onClick={() => {
               setLoading(true);
               void loadCars();
             }}
-            className="rounded-lg border border-zinc-300 bg-white px-5 py-2.5 text-sm font-semibold hover:bg-zinc-100"
+            className="rounded-lg border bg-white px-5 py-2.5 text-sm font-semibold"
           >
-            Refresh Listings
+            Refresh
           </button>
         </div>
 
         {error && (
-          <div
+          <p
             role="alert"
-            className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+            className="mb-6 rounded-xl bg-red-50 p-4 text-red-700"
           >
             {error}
-          </div>
+          </p>
         )}
 
-        {loading ? (
-          <div className="rounded-xl bg-white p-12 text-center text-zinc-500">
-            Loading REVV listings...
-          </div>
-        ) : cars.length === 0 ? (
-          <div className="rounded-xl border border-zinc-200 bg-white p-12 text-center">
-            <h3 className="text-xl font-bold">
-              No listings found
+        {cars.length === 0 ? (
+          <div className="rounded-2xl bg-white p-12 text-center">
+            <h3 className="text-2xl font-bold">
+              No listings yet
             </h3>
-
-            <p className="mt-2 text-zinc-500">
-              Create a vehicle to get started.
+            <p className="mt-3 text-zinc-500">
+              Your first vehicle listing will appear here.
             </p>
-
             <Link
               href="/sell"
-              className="mt-6 inline-block rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white"
+              className="mt-6 inline-block rounded-xl bg-blue-600 px-6 py-3 font-bold text-white"
             >
               Create Listing
             </Link>
@@ -233,18 +262,18 @@ export default function MyListingsPage() {
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={car.cover}
-                      alt={`${car.year} ${car.make} ${car.model}`}
+                      alt={`${car.make} ${car.model}`}
                       className="h-full w-full object-cover"
                     />
                   ) : (
-                    <div className="flex h-full items-center justify-center text-sm text-zinc-400">
-                      No vehicle photo
+                    <div className="flex h-full items-center justify-center text-zinc-400">
+                      No Photo
                     </div>
                   )}
                 </div>
 
                 <div className="p-6">
-                  <p className="text-xs font-semibold uppercase tracking-widest text-blue-600">
+                  <p className="text-xs font-bold uppercase tracking-widest text-blue-600">
                     Listing #{car.id}
                   </p>
 
@@ -252,7 +281,7 @@ export default function MyListingsPage() {
                     {car.year} {car.make} {car.model}
                   </h3>
 
-                  <p className="mt-3 text-2xl font-bold text-blue-600">
+                  <p className="mt-3 text-2xl font-black text-blue-600">
                     {currency(car.price_nzd)}
                   </p>
 
@@ -265,14 +294,14 @@ export default function MyListingsPage() {
                   <div className="mt-6 grid grid-cols-2 gap-2">
                     <Link
                       href={`/cars/${car.id}`}
-                      className="rounded-lg border border-zinc-200 px-4 py-3 text-center text-sm font-semibold hover:bg-zinc-50"
+                      className="rounded-lg border px-4 py-3 text-center text-sm font-semibold"
                     >
                       View
                     </Link>
 
                     <Link
                       href={`/my-listings/${car.id}/edit`}
-                      className="rounded-lg bg-blue-600 px-4 py-3 text-center text-sm font-semibold text-white hover:bg-blue-500"
+                      className="rounded-lg bg-blue-600 px-4 py-3 text-center text-sm font-semibold text-white"
                     >
                       Edit
                     </Link>
@@ -280,8 +309,8 @@ export default function MyListingsPage() {
 
                   <button
                     type="button"
+                    onClick={() => void deleteCar(car)}
                     disabled={deleting !== null}
-                    onClick={() => void deleteVehicle(car)}
                     className="mt-3 w-full rounded-lg border border-red-200 px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
                   >
                     {deleting === car.id
@@ -293,12 +322,6 @@ export default function MyListingsPage() {
             ))}
           </div>
         )}
-
-        <p className="mt-10 text-xs text-zinc-500">
-          Development access only. All database
-          listings are visible here until seller
-          authentication and ownership checks are added.
-        </p>
       </section>
     </main>
   );
