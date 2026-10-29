@@ -489,4 +489,58 @@ def custom_openapi():
     return schema
 
 
+# --------------------------------------------------
+# DELETE VEHICLE (LOCAL DEVELOPMENT ONLY)
+# --------------------------------------------------
+
+@app.delete("/api/v1/cars/{car_id}")
+def delete_car(
+    car_id: int,
+    db: Session = Depends(get_db),
+):
+    car = db.get(Vehicle, car_id)
+
+    if car is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found",
+        )
+
+    # Collect the photo filenames before deleting records.
+    images = db.scalars(
+        select(VehicleImage).where(
+            VehicleImage.vehicle_id == car_id
+        )
+    ).all()
+
+    filenames = [image.filename for image in images]
+
+    # Delete photo database records first.
+    for image in images:
+        db.delete(image)
+
+    # Delete the vehicle record.
+    db.delete(car)
+    db.commit()
+
+    # Remove uploaded files after database deletion.
+    for filename in filenames:
+        try:
+            (UPLOAD_DIR / filename).unlink(missing_ok=True)
+        except OSError:
+            # Log file cleanup failures for investigation.
+            import logging
+            logging.exception(
+                "Could not remove vehicle photo: %s",
+                filename,
+            )
+
+    return {
+        "message": "Vehicle deleted successfully",
+        "deleted_vehicle_id": car_id,
+        "deleted_images": len(images),
+    }
+
+
+
 app.openapi = custom_openapi
