@@ -5,6 +5,8 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 from typing import Annotated
+from pydantic import BaseModel, Field
+
 
 from fastapi import (
     Depends,
@@ -66,7 +68,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=sorted(FRONTEND_ORIGINS),
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
@@ -101,6 +103,213 @@ def get_db():
     finally:
         db.close()
 
+
+
+# --------------------------------------------------
+# PHOTO MANAGEMENT - OWNER OR ADMIN
+# --------------------------------------------------
+
+class PhotoOrderRequest(BaseModel):
+    image_ids: list[int] = Field(
+        min_length=1,
+        max_length=10,
+    )
+
+
+def get_owned_photo(
+    car_id: int,
+    image_id: int,
+    db: Session,
+) -> VehicleImage:
+    image = db.scalar(
+        select(VehicleImage).where(
+            VehicleImage.id == image_id,
+            VehicleImage.vehicle_id == car_id,
+        )
+    )
+
+    if image is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle photo not found",
+        )
+
+    return image
+
+
+# --------------------------------------------------
+# DELETE AN INDIVIDUAL VEHICLE PHOTO
+# --------------------------------------------------
+
+@app.delete(
+    "/api/v1/cars/{car_id}/images/{image_id}"
+)
+def delete_vehicle_photo(
+    car_id: int,
+    image_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    verify_write_origin(request)
+    require_listing_access(car_id, db, user)
+
+    image = get_owned_photo(
+        car_id,
+        image_id,
+        db,
+    )
+
+    filename = image.filename
+    was_cover = image.is_cover
+
+    db.delete(image)
+    db.flush()
+
+    remaining = db.scalars(
+        select(VehicleImage)
+        .where(VehicleImage.vehicle_id == car_id)
+        .order_by(
+            VehicleImage.position,
+            VehicleImage.id,
+        )
+    ).all()
+
+    for index, photo in enumerate(remaining):
+        photo.position = index
+
+        # Guarantee one cover for non-empty galleries.
+        if was_cover:
+            photo.is_cover = index == 0
+
+    db.commit()
+
+    # Delete the physical photo only after DB success.
+    try:
+        (UPLOAD_DIR / filename).unlink(
+            missing_ok=True
+        )
+    except OSError:
+        logger.exception(
+            "Unable to remove photo file: %s",
+            filename,
+        )
+
+    return {
+        "message": "Photo deleted successfully",
+        "deleted_image_id": image_id,
+        "remaining_images": len(remaining),
+    }
+
+
+# --------------------------------------------------
+# SET A NEW COVER PHOTO
+# --------------------------------------------------
+
+@app.patch(
+    "/api/v1/cars/{car_id}/images/{image_id}/cover"
+)
+def set_vehicle_cover_photo(
+    car_id: int,
+    image_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    verify_write_origin(request)
+    require_listing_access(car_id, db, user)
+
+    selected = get_owned_photo(
+        car_id,
+        image_id,
+        db,
+    )
+
+    photos = db.scalars(
+        select(VehicleImage).where(
+            VehicleImage.vehicle_id == car_id
+        )
+    ).all()
+
+    for photo in photos:
+        photo.is_cover = (
+            photo.id == selected.id
+        )
+
+    db.commit()
+    db.refresh(selected)
+
+    return {
+        "message": "Cover photo updated",
+        "vehicle_id": car_id,
+        "cover_image": image_to_dict(selected),
+    }
+
+
+# --------------------------------------------------
+# REORDER VEHICLE PHOTOS
+# --------------------------------------------------
+
+@app.put(
+    "/api/v1/cars/{car_id}/images/order"
+)
+def reorder_vehicle_photos(
+    car_id: int,
+    payload: PhotoOrderRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    verify_write_origin(request)
+    require_listing_access(car_id, db, user)
+
+    photos = db.scalars(
+        select(VehicleImage).where(
+            VehicleImage.vehicle_id == car_id
+        )
+    ).all()
+
+    requested_ids = payload.image_ids
+    existing_ids = {photo.id for photo in photos}
+
+    if len(requested_ids) != len(set(requested_ids)):
+        raise HTTPException(
+            status_code=422,
+            detail="Duplicate photo IDs are not allowed",
+        )
+
+    if set(requested_ids) != existing_ids:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Provide every photo ID belonging "
+                "to this vehicle, exactly once"
+            ),
+        )
+
+    positions = {
+        image_id: index
+        for index, image_id in enumerate(requested_ids)
+    }
+
+    for photo in photos:
+        photo.position = positions[photo.id]
+
+    db.commit()
+
+    ordered = sorted(
+        photos,
+        key=lambda photo: photo.position,
+    )
+
+    return {
+        "message": "Photo order updated",
+        "vehicle_id": car_id,
+        "images": [
+            image_to_dict(photo)
+            for photo in ordered
+        ],
+    }
 
 # --------------------------------------------------
 # REQUEST VALIDATION

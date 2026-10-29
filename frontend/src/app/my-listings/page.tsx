@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 const API = "http://127.0.0.1:8000";
 
-type Car = {
+type Vehicle = {
   id: number;
   make: string;
   model: string;
@@ -15,77 +15,160 @@ type Car = {
   mileage_km: number;
   location: string;
   owner_id: number | null;
-  cover?: string;
 };
 
+type Photo = {
+  id: number;
+  url: string;
+  is_cover: boolean;
+  position: number;
+};
+
+type Listing = Vehicle & {
+  coverUrl: string | null;
+};
+
+function formatPrice(value: number) {
+  return new Intl.NumberFormat("en-NZ", {
+    style: "currency",
+    currency: "NZD",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function extractCars(data: unknown): Vehicle[] {
+  if (Array.isArray(data)) {
+    return data as Vehicle[];
+  }
+
+  if (data !== null && typeof data === "object") {
+    const response = data as Record<string, unknown>;
+
+    for (const key of ["data", "cars", "vehicles", "items", "listings"]) {
+      const value = response[key];
+
+      if (Array.isArray(value)) {
+        return value as Vehicle[];
+      }
+    }
+  }
+
+  console.error("Unexpected My Listings API response:", data);
+
+  throw new Error(
+    "Unexpected listings response from the server."
+  );
+}
+
 export default function MyListingsPage() {
-  const [cars, setCars] = useState<Car[]>([]);
+  const [listings, setListings] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(true);
-  const [deleting, setDeleting] = useState<number | null>(null);
   const [error, setError] = useState("");
-  const [unauthorized, setUnauthorized] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(
+    null
+  );
 
-  const loadCars = useCallback(async () => {
+  const loadListings = useCallback(async () => {
+    setLoading(true);
+    setError("");
+
     try {
-      setError("");
-      setUnauthorized(false);
-
       const response = await fetch(
         `${API}/api/v1/my/cars`,
         {
+          method: "GET",
           credentials: "include",
           cache: "no-store",
         }
       );
 
       if (response.status === 401) {
-        setUnauthorized(true);
-        return;
+        throw new Error(
+          "Your session has expired. Please log in again."
+        );
+      }
+
+      if (response.status === 403) {
+        throw new Error(
+          "You do not have permission to view these listings."
+        );
       }
 
       if (!response.ok) {
-        throw new Error("Unable to load your listings.");
+        throw new Error(
+          `Unable to load your listings (${response.status}).`
+        );
       }
 
-      const result: { data: Car[] } = await response.json();
+      // Parse API data without incorrectly assuming it is an array.
+      const data: unknown = await response.json();
 
-      const vehicles = await Promise.all(
-        result.data.map(async (car) => {
+      // Accept direct arrays or common wrapped API responses.
+      const cars: Vehicle[] = extractCars(data);
+
+      // Attach cover photos to each vehicle.
+      const withImages: Listing[] = await Promise.all(
+        cars.map(async (car: Vehicle) => {
+          let coverUrl: string | null = null;
+
           try {
-            const imageResponse = await fetch(
+            const photoResponse = await fetch(
               `${API}/api/v1/cars/${car.id}/images`,
-              { cache: "no-store" }
+              {
+                method: "GET",
+                cache: "no-store",
+              }
             );
 
-            if (!imageResponse.ok) return car;
+            if (photoResponse.ok) {
+              const gallery: {
+                images?: Photo[];
+              } = await photoResponse.json();
 
-            const data: {
-              images: {
-                url: string;
-                is_cover: boolean;
-              }[];
-            } = await imageResponse.json();
+              const photos: Photo[] = Array.isArray(
+                gallery.images
+              )
+                ? [...gallery.images]
+                : [];
 
-            const cover =
-              data.images.find((image) => image.is_cover) ??
-              data.images[0];
+              photos.sort(
+                (a, b) =>
+                  a.position - b.position || a.id - b.id
+              );
 
-            return {
-              ...car,
-              cover: cover ? `${API}${cover.url}` : undefined,
-            };
-          } catch {
-            return car;
+              const cover =
+                photos.find((photo) => photo.is_cover) ??
+                photos[0];
+
+              if (cover) {
+                coverUrl = new URL(
+                  cover.url,
+                  API
+                ).toString();
+              }
+            }
+          } catch (photoError) {
+            console.warn(
+              `Unable to load photos for listing ${car.id}:`,
+              photoError
+            );
           }
+
+          return {
+            ...car,
+            coverUrl,
+          };
         })
       );
 
-      setCars(vehicles);
+      setListings(withImages);
     } catch (err) {
+      console.error("My Listings error:", err);
+
       setError(
         err instanceof Error
           ? err.message
-          : "Something went wrong."
+          : "Unable to load your listings."
       );
     } finally {
       setLoading(false);
@@ -93,19 +176,19 @@ export default function MyListingsPage() {
   }, []);
 
   useEffect(() => {
-    void loadCars();
-  }, [loadCars]);
+    void loadListings();
+  }, [loadListings]);
 
-  async function deleteCar(car: Car) {
-    if (deleting !== null) return;
+  async function deleteListing(car: Listing) {
+    if (deletingId !== null) return;
 
     const confirmed = window.confirm(
-      `Permanently delete ${car.year} ${car.make} ${car.model}?\n\nAll its uploaded photos will also be deleted.`
+      `Are you sure you want to permanently delete your ${car.year} ${car.make} ${car.model}?`
     );
 
     if (!confirmed) return;
 
-    setDeleting(car.id);
+    setDeletingId(car.id);
     setError("");
 
     try {
@@ -117,212 +200,233 @@ export default function MyListingsPage() {
         }
       );
 
-      if (!response.ok) {
-        if (response.status === 403) {
-          throw new Error(
-            "You don't have permission to delete this car."
-          );
-        }
-
-        if (response.status === 401) {
-          throw new Error(
-            "Your session has expired. Please log in again."
-          );
-        }
-
-        throw new Error("Unable to delete listing.");
+      if (response.status === 401) {
+        throw new Error(
+          "Your session has expired. Please log in again."
+        );
       }
 
-      setCars((current) =>
-        current.filter((item) => item.id !== car.id)
+      if (response.status === 403) {
+        throw new Error(
+          "You do not have permission to delete this listing."
+        );
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          `Unable to delete listing (${response.status}).`
+        );
+      }
+
+      setListings((current) =>
+        current.filter((listing) => listing.id !== car.id)
       );
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Delete failed."
+        err instanceof Error
+          ? err.message
+          : "Unable to delete your listing."
       );
     } finally {
-      setDeleting(null);
+      setDeletingId(null);
     }
   }
 
-  const currency = (value: number) =>
-    new Intl.NumberFormat("en-NZ", {
-      style: "currency",
-      currency: "NZD",
-      maximumFractionDigits: 0,
-    }).format(value);
-
-  if (loading) {
-    return (
-      <main className="min-h-screen bg-[#080e18] p-16 text-center text-white">
-        Loading your listings...
-      </main>
-    );
-  }
-
-  if (unauthorized) {
-    return (
-      <main className="min-h-screen bg-[#080e18] px-6 py-20 text-center text-white">
-        <h1 className="text-3xl font-black">
-          Login Required
-        </h1>
-        <p className="mt-4 text-zinc-400">
-          Sign in to manage your vehicles.
-        </p>
-        <Link
-          href="/login"
-          className="mt-6 inline-block rounded-xl bg-blue-600 px-6 py-3 font-semibold"
-        >
-          Sign In
-        </Link>
-      </main>
-    );
-  }
-
   return (
-    <main className="min-h-screen bg-[#f4f6f9] text-zinc-900">
-      <section className="bg-[#0b1321] px-6 py-16 text-white">
-        <div className="mx-auto max-w-6xl">
-          <p className="text-xs font-bold uppercase tracking-widest text-blue-400">
-            REVV / SELLER DASHBOARD
-          </p>
+    <main className="min-h-screen bg-[#080e18] px-5 py-14 text-white">
+      <div className="mx-auto max-w-6xl">
 
-          <h1 className="mt-4 text-4xl font-black md:text-5xl">
-            My Listings
-          </h1>
+        {/* PAGE HEADER */}
 
-          <p className="mt-4 text-zinc-400">
-            Manage your vehicles, pricing and listing details.
-          </p>
+        <div className="flex flex-wrap items-end justify-between gap-6">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-blue-400">
+              REVV / SELLER DASHBOARD
+            </p>
+
+            <h1 className="mt-3 text-4xl font-black tracking-tight md:text-5xl">
+              My Listings
+            </h1>
+
+            <p className="mt-3 text-zinc-400">
+              Manage your vehicles, edit information,
+              update photos and keep track of your listings.
+            </p>
+          </div>
 
           <Link
             href="/sell"
-            className="mt-8 inline-block rounded-xl bg-blue-600 px-6 py-3 font-semibold"
+            className="rounded-xl bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-500"
           >
             + Sell Another Car
           </Link>
         </div>
-      </section>
 
-      <section className="mx-auto max-w-6xl px-6 py-12">
-        <div className="mb-8 flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-bold">
-              Your Vehicles
-            </h2>
-            <p className="mt-1 text-sm text-zinc-500">
-              {cars.length} listings
-            </p>
-          </div>
-
-          <button
-            onClick={() => {
-              setLoading(true);
-              void loadCars();
-            }}
-            className="rounded-lg border bg-white px-5 py-2.5 text-sm font-semibold"
-          >
-            Refresh
-          </button>
-        </div>
+        {/* ERROR MESSAGE */}
 
         {error && (
-          <p
+          <div
             role="alert"
-            className="mb-6 rounded-xl bg-red-50 p-4 text-red-700"
+            className="mt-8 rounded-xl border border-red-500/30 bg-red-500/10 p-5 text-red-300"
           >
-            {error}
-          </p>
+            <p className="font-semibold">
+              Could not load listings
+            </p>
+
+            <p className="mt-2 text-sm">{error}</p>
+
+            <button
+              type="button"
+              onClick={() => void loadListings()}
+              className="mt-4 rounded-lg border border-red-400/30 px-4 py-2 text-sm font-semibold hover:bg-red-500/10"
+            >
+              Try Again
+            </button>
+          </div>
         )}
 
-        {cars.length === 0 ? (
-          <div className="rounded-2xl bg-white p-12 text-center">
-            <h3 className="text-2xl font-bold">
+        {/* LOADING */}
+
+        {loading ? (
+          <div className="mt-12 rounded-2xl border border-white/10 bg-[#101a2a] p-12 text-center text-zinc-400">
+            Loading your listings...
+          </div>
+        ) : error && listings.length === 0 ? null : listings.length === 0 ? (
+
+          /* EMPTY STATE */
+
+          <div className="mt-10 rounded-2xl border border-white/10 bg-[#101a2a] px-8 py-16 text-center">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-600/15 text-3xl">
+              🚗
+            </div>
+
+            <h2 className="mt-6 text-2xl font-bold">
               No listings yet
-            </h3>
-            <p className="mt-3 text-zinc-500">
-              Your first vehicle listing will appear here.
+            </h2>
+
+            <p className="mx-auto mt-3 max-w-md text-zinc-400">
+              You haven't listed any cars on REVV yet.
+              Create your first listing to get started.
             </p>
+
             <Link
               href="/sell"
-              className="mt-6 inline-block rounded-xl bg-blue-600 px-6 py-3 font-bold text-white"
+              className="mt-7 inline-block rounded-xl bg-blue-600 px-7 py-3 font-semibold hover:bg-blue-500"
             >
-              Create Listing
+              Create Your First Listing
             </Link>
           </div>
         ) : (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {cars.map((car) => (
-              <article
-                key={car.id}
-                className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm"
+          <>
+            {/* LISTING COUNT */}
+
+            <div className="mt-9 flex flex-wrap items-center justify-between gap-4">
+              <p className="text-sm text-zinc-400">
+                {listings.length}{" "}
+                {listings.length === 1
+                  ? "vehicle listing"
+                  : "vehicle listings"}
+              </p>
+
+              <button
+                type="button"
+                onClick={() => void loadListings()}
+                className="rounded-lg border border-white/15 px-4 py-2 text-sm font-medium hover:bg-white/10"
               >
-                <div className="h-52 bg-zinc-100">
-                  {car.cover ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={car.cover}
-                      alt={`${car.make} ${car.model}`}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full items-center justify-center text-zinc-400">
-                      No Photo
-                    </div>
-                  )}
-                </div>
+                Refresh Listings
+              </button>
+            </div>
 
-                <div className="p-6">
-                  <p className="text-xs font-bold uppercase tracking-widest text-blue-600">
-                    Listing #{car.id}
-                  </p>
+            {/* VEHICLE CARDS */}
 
-                  <h3 className="mt-3 text-xl font-bold">
-                    {car.year} {car.make} {car.model}
-                  </h3>
+            <div className="mt-5 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {listings.map((car) => (
+                <article
+                  key={car.id}
+                  className="overflow-hidden rounded-2xl border border-white/10 bg-[#101a2a] transition hover:border-blue-500/40"
+                >
+                  {/* VEHICLE PHOTO */}
 
-                  <p className="mt-3 text-2xl font-black text-blue-600">
-                    {currency(car.price_nzd)}
-                  </p>
+                  <div className="relative h-52 bg-[#172438]">
+                    {car.coverUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={car.coverUrl}
+                        alt={`${car.year} ${car.make} ${car.model}`}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center gap-2 text-zinc-500">
+                        <span className="text-4xl">🚘</span>
+                        <span className="text-sm">
+                          No vehicle photos
+                        </span>
+                      </div>
+                    )}
 
-                  <p className="mt-3 text-sm text-zinc-500">
-                    {car.mileage_km.toLocaleString("en-NZ")} km
-                    {" · "}
-                    {car.location}
-                  </p>
-
-                  <div className="mt-6 grid grid-cols-2 gap-2">
-                    <Link
-                      href={`/cars/${car.id}`}
-                      className="rounded-lg border px-4 py-3 text-center text-sm font-semibold"
-                    >
-                      View
-                    </Link>
-
-                    <Link
-                      href={`/my-listings/${car.id}/edit`}
-                      className="rounded-lg bg-blue-600 px-4 py-3 text-center text-sm font-semibold text-white"
-                    >
-                      Edit
-                    </Link>
+                    <span className="absolute bottom-3 left-3 rounded-lg bg-black/70 px-3 py-1 text-xs font-semibold text-white">
+                      Listing #{car.id}
+                    </span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => void deleteCar(car)}
-                    disabled={deleting !== null}
-                    className="mt-3 w-full rounded-lg border border-red-200 px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
-                  >
-                    {deleting === car.id
-                      ? "Deleting..."
-                      : "Delete Listing"}
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
+                  {/* VEHICLE DETAILS */}
+
+                  <div className="p-5">
+                    <h2 className="text-xl font-bold">
+                      {car.year} {car.make} {car.model}
+                    </h2>
+
+                    <p className="mt-3 text-2xl font-black text-blue-400">
+                      {formatPrice(car.price_nzd)}
+                    </p>
+
+                    <div className="mt-4 flex flex-wrap gap-x-3 gap-y-2 text-sm text-zinc-400">
+                      <span>
+                        {Number(
+                          car.mileage_km
+                        ).toLocaleString("en-NZ")} km
+                      </span>
+
+                      <span>•</span>
+
+                      <span>{car.location}</span>
+                    </div>
+
+                    {/* ACTIONS */}
+
+                    <div className="mt-6 grid grid-cols-2 gap-3">
+                      <Link
+                        href={`/cars/${car.id}`}
+                        className="rounded-lg border border-white/15 px-4 py-3 text-center text-sm font-semibold transition hover:bg-white/10"
+                      >
+                        View Listing
+                      </Link>
+
+                      <Link
+                        href={`/my-listings/${car.id}/edit`}
+                        className="rounded-lg bg-blue-600 px-4 py-3 text-center text-sm font-semibold transition hover:bg-blue-500"
+                      >
+                        Edit Listing
+                      </Link>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={deletingId !== null}
+                      onClick={() => void deleteListing(car)}
+                      className="mt-3 w-full rounded-lg border border-red-500/30 px-4 py-3 text-sm font-semibold text-red-300 transition hover:bg-red-500/10 disabled:opacity-50"
+                    >
+                      {deletingId === car.id
+                        ? "Deleting..."
+                        : "Delete Listing"}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </>
         )}
-      </section>
+      </div>
     </main>
   );
 }
