@@ -1,7 +1,7 @@
-
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import ContactSellerButton from "@/components/ContactSellerButton";
+import VehicleDealActions from "@/components/VehicleDealActions";
 
 import {
   VehicleGallery,
@@ -390,8 +390,15 @@ export default async function CarDetailsPage({
               {/* CONTACT SELLER — WORKING COMPONENT */}
 
               <div className="mt-8 border-t border-white/10 pt-6">
-                <ContactSellerButton vehicleId={car.id} />
-              </div>
+  <VehicleDealActions
+    vehicleId={car.id}
+    askingPrice={car.price_nzd}
+  />
+</div>
+
+<div className="mt-5">
+  <ContactSellerButton vehicleId={car.id} />
+</div>
 
               {/* BROWSE MORE CARS */}
 

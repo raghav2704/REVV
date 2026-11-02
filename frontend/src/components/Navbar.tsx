@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import MessagesNavLink from "@/components/MessagesNavLink";
+import DealsNavLinks from "@/components/DealsNavLinks";
 
 const API = "http://127.0.0.1:8000";
 
@@ -140,6 +141,8 @@ export default function Navbar() {
               {/* REVV MESSAGES */}
 
               <MessagesNavLink />
+              <DealsNavLinks />
+              
 
               {/* ADMIN DASHBOARD */}
 
