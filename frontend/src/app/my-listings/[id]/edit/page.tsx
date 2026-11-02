@@ -10,6 +10,10 @@ import {
   type FormEvent,
 } from "react";
 import VehiclePhotoUploader from "@/components/VehiclePhotoUploader";
+import VehicleSpecificationsFields, {
+  emptyVehicleSpecifications,
+  type VehicleSpecifications,
+} from "@/components/VehicleSpecificationsFields";
 
 const API = "http://127.0.0.1:8000";
 
@@ -21,8 +25,8 @@ type Vehicle = {
   price_nzd: number;
   mileage_km: number;
   location: string;
-  owner_id: number | null;
-};
+  owner_id?: number | null;
+} & Partial<VehicleSpecifications>;
 
 type Account = {
   id: number;
@@ -78,11 +82,15 @@ async function checkResponse(response: Response) {
   if (!response.ok) {
     const body = await response.json().catch(() => null);
 
-    throw new Error(
-      typeof body?.detail === "string"
-        ? body.detail
-        : `Request failed (${response.status}).`
-    );
+    const detail = body?.detail;
+    const reason = typeof detail === "string"
+      ? detail
+      : Array.isArray(detail)
+        ? detail.map((issue: { loc?: unknown[]; msg?: string }) =>
+            `${Array.isArray(issue.loc) ? issue.loc.join(".") : "Field"}: ${issue.msg ?? "Invalid value"}`
+          ).join("; ")
+        : `Request failed (${response.status}).`;
+    throw new Error(reason);
   }
 }
 
@@ -99,6 +107,9 @@ export default function EditVehiclePage() {
   const [account, setAccount] = useState<Account | null>(null);
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [form, setForm] = useState<VehicleForm | null>(null);
+  const [specifications, setSpecifications] = useState<VehicleSpecifications>(
+    emptyVehicleSpecifications
+  );
 
   const [photos, setPhotos] = useState<VehiclePhoto[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -113,7 +124,9 @@ export default function EditVehiclePage() {
   const canEdit =
     account !== null &&
     vehicle !== null &&
-    (isAdmin || vehicle.owner_id === account.id);
+    (isAdmin || vehicle.owner_id === account.id || vehicle.owner_id === undefined);
+
+  // Ownership is checked using the authenticated inventory endpoint at load.
 
   const backLink = isAdmin ? "/admin" : "/my-listings";
 
@@ -161,15 +174,29 @@ export default function EditVehiclePage() {
           ]);
 
         await checkResponse(accountResponse);
-        await checkResponse(vehicleResponse);
         await checkResponse(photosResponse);
 
         const currentAccount = unwrap<Account>(
           await accountResponse.json()
         );
 
-        const currentVehicle = unwrap<Vehicle>(
-          await vehicleResponse.json()
+        // Owners must be resolved through the authenticated inventory API.
+        // The public serializer intentionally does not return owner_id.
+        const inventoryResponse = await fetch(`${API}/api/v1/my/cars`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const inventory = inventoryResponse.ok
+          ? unwrap<Vehicle[]>(await inventoryResponse.json())
+          : [];
+        const ownedVehicle = Array.isArray(inventory)
+          ? inventory.find((item) => item.id === Number(id))
+          : undefined;
+
+        const currentVehicle = ownedVehicle ?? (
+          vehicleResponse.ok
+            ? unwrap<Vehicle>(await vehicleResponse.json())
+            : null
         );
 
         const gallery = unwrap<{ images: VehiclePhoto[] }>(
@@ -187,7 +214,7 @@ export default function EditVehiclePage() {
 
         if (
           currentAccount.role !== "admin" &&
-          currentVehicle.owner_id !== currentAccount.id
+          !ownedVehicle
         ) {
           throw new Error(
             "You are not authorised to edit this listing."
@@ -212,6 +239,15 @@ export default function EditVehiclePage() {
           location: currentVehicle.location,
         });
 
+        setSpecifications({
+          ...emptyVehicleSpecifications,
+          ...Object.fromEntries(
+            Object.keys(emptyVehicleSpecifications).map((key) => [
+              key,
+              currentVehicle[key as keyof VehicleSpecifications] ?? null,
+            ])
+          ),
+        } as VehicleSpecifications);
         setPhotos(sortPhotos(gallery.images));
       } catch (err) {
         if (active) {
@@ -283,6 +319,7 @@ export default function EditVehiclePage() {
         price_nzd: price,
         mileage_km: mileage,
         location: form.location.trim(),
+        ...specifications,
       };
 
       const response = await fetch(
@@ -299,11 +336,27 @@ export default function EditVehiclePage() {
 
       await checkResponse(response);
 
-      setVehicle((current) =>
-        current ? { ...current, ...payload } : null
-      );
+      // A 200 response alone doesn't prove that the backend persisted
+      // the new V2 fields. Fetch the saved record and verify each field.
+      const verifyResponse = await fetch(`${API}/api/v1/cars/${id}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      await checkResponse(verifyResponse);
+      const saved = unwrap<Vehicle>(await verifyResponse.json());
+      const unpersisted = Object.entries(specifications).filter(([key, value]) => {
+        const actual = saved[key as keyof VehicleSpecifications];
+        return (actual ?? null) !== (value ?? null);
+      });
 
-      setSuccess("Vehicle details saved successfully.");
+      if (unpersisted.length > 0) {
+        throw new Error(
+          `The server accepted the update but did not return these saved fields: ${unpersisted.map(([key]) => key).join(", ")}. Check your FastAPI PATCH handler and vehicle_to_dict serializer.`
+        );
+      }
+
+      setVehicle(saved);
+      setSuccess("Vehicle details saved and verified successfully.");
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Save failed."
@@ -625,6 +678,17 @@ export default function EditVehiclePage() {
                 />
               </label>
             ))}
+          </div>
+
+          <div className="mt-8">
+            <VehicleSpecificationsFields
+              value={specifications}
+              onChange={(next) => {
+                setSpecifications(next);
+                setSuccess("");
+              }}
+              disabled={busy}
+            />
           </div>
 
           <button

@@ -1,4 +1,3 @@
-
 "use client";
 
 import Link from "next/link";
@@ -9,6 +8,10 @@ import {
   useState,
 } from "react";
 import VehiclePhotoUploader from "@/components/VehiclePhotoUploader";
+import VehicleSpecificationsFields, {
+  emptyVehicleSpecifications,
+  type VehicleSpecifications,
+} from "@/components/VehicleSpecificationsFields";
 
 const API = "http://127.0.0.1:8000";
 
@@ -142,6 +145,8 @@ function SectionHeader({
 
 export default function SellCarForm() {
   const [form, setForm] = useState<FormValues>(initialValues);
+  const [specifications, setSpecifications] =
+    useState<VehicleSpecifications>({ ...emptyVehicleSpecifications });
 
   const [makes, setMakes] = useState<Make[]>([]);
   const [models, setModels] = useState<Model[]>([]);
@@ -347,7 +352,7 @@ export default function SellCarForm() {
     if (
       !form.year.trim() ||
       !Number.isInteger(year) ||
-      year < 1886 ||
+      year < 1900 ||
       year > currentYear + 1
     ) {
       return "Enter a valid vehicle year.";
@@ -440,6 +445,7 @@ export default function SellCarForm() {
               mileage_km: Number(form.mileage_km),
               price_nzd: Number(form.price_nzd),
               location: form.location.trim(),
+              ...specifications,
             }),
           }
         );
@@ -794,7 +800,7 @@ export default function SellCarForm() {
               id="revv-year"
               required
               type="number"
-              min={1886}
+              min={1900}
               max={currentYear + 1}
               value={form.year}
               disabled={createdId !== null}
@@ -875,11 +881,19 @@ export default function SellCarForm() {
         </div>
       </section>
 
+      {/* VEHICLE SPECIFICATIONS */}
+
+      <VehicleSpecificationsFields
+        value={specifications}
+        onChange={setSpecifications}
+        disabled={submitting || createdId !== null}
+      />
+
       {/* PHOTO UPLOADER */}
 
       <section className={sectionClass}>
         <SectionHeader
-          number="02"
+          number="03"
           title="Vehicle photos"
           description="Showcase your vehicle from every angle."
         />

@@ -5,10 +5,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 from typing import Annotated
-from pydantic import BaseModel, Field
 from app.routes.vehicle_catalogue import router as vehicle_catalogue_router
-from app.vehicle_spec_schemas import VehicleCreate, VehicleUpdate
-
 from app.vehicle_spec_schemas import VehicleCreate, VehicleUpdate
 
 from fastapi import (
@@ -25,7 +22,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 
 from PIL import Image, ImageOps, UnidentifiedImageError
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -36,6 +33,7 @@ from app.routes.auth import (
     get_current_user,
     router as auth_router,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -317,76 +315,9 @@ def reorder_vehicle_photos(
     }
 
 # --------------------------------------------------
-# REQUEST VALIDATION
+# V2 request validation imported from app.vehicle_spec_schemas
 # --------------------------------------------------
 
-class VehicleCreate(BaseModel):
-    make: str = Field(min_length=1, max_length=100)
-    model: str = Field(min_length=1, max_length=100)
-    year: int = Field(ge=1900, le=2100)
-    price_nzd: int = Field(gt=0)
-    mileage_km: int = Field(ge=0)
-    location: str = Field(min_length=1, max_length=100)
-
-    @field_validator("make", "model", "location")
-    @classmethod
-    def validate_text(cls, value: str) -> str:
-        value = value.strip()
-
-        if not value:
-            raise ValueError("This field cannot be empty")
-
-        return value
-
-
-class VehicleUpdate(BaseModel):
-    make: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=100,
-    )
-    model: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=100,
-    )
-    year: int | None = Field(
-        default=None,
-        ge=1900,
-        le=2100,
-    )
-    price_nzd: int | None = Field(
-        default=None,
-        gt=0,
-    )
-    mileage_km: int | None = Field(
-        default=None,
-        ge=0,
-    )
-    location: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=100,
-    )
-
-    @field_validator("make", "model", "location")
-    @classmethod
-    def validate_text(
-        cls,
-        value: str | None,
-    ) -> str | None:
-        if value is None:
-            return None
-
-        value = value.strip()
-
-        if not value:
-            raise ValueError("This field cannot be empty")
-
-        return value
-
-
-# --------------------------------------------------
 # SECURITY HELPERS
 # --------------------------------------------------
 
@@ -503,6 +434,11 @@ def vehicle_to_dict(car: Vehicle):
         # Listing content
         "description": car.description,
         "listing_status": car.listing_status,
+        "wof_expiry": car.wof_expiry.isoformat() if car.wof_expiry else None,
+        "registration_expiry": (
+            car.registration_expiry.isoformat()
+            if car.registration_expiry else None
+        ),
     }
 
 
