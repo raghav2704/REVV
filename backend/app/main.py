@@ -7,8 +7,9 @@ from urllib.parse import urlsplit
 from typing import Annotated
 from pydantic import BaseModel, Field
 from app.routes.vehicle_catalogue import router as vehicle_catalogue_router
+from app.vehicle_spec_schemas import VehicleCreate, VehicleUpdate
 
-
+from app.vehicle_spec_schemas import VehicleCreate, VehicleUpdate
 
 from fastapi import (
     Depends,
@@ -50,6 +51,7 @@ app = FastAPI(
 
 app.include_router(auth_router)
 app.include_router(vehicle_catalogue_router)
+
 
 # --------------------------------------------------
 # CORS
@@ -461,8 +463,17 @@ def require_admin(user: User):
 # SERIALISERS
 # --------------------------------------------------
 
+
 def vehicle_to_dict(car: Vehicle):
+    """
+    Public-facing vehicle information.
+
+    Registration plates, VINs and ownership identifiers
+    are deliberately excluded from public responses.
+    """
+
     return {
+        # Basic listing information
         "id": car.id,
         "make": car.make,
         "model": car.model,
@@ -470,8 +481,30 @@ def vehicle_to_dict(car: Vehicle):
         "price_nzd": car.price_nzd,
         "mileage_km": car.mileage_km,
         "location": car.location,
-        "owner_id": car.owner_id,
+
+        # Vehicle identity
+        "variant": car.variant,
+
+        # Body and appearance
+        "body_type": car.body_type,
+        "exterior_colour": car.exterior_colour,
+        "seats": car.seats,
+
+        # Mechanical specifications
+        "fuel_type": car.fuel_type,
+        "transmission": car.transmission,
+        "drivetrain": car.drivetrain,
+        "engine_cc": car.engine_cc,
+
+        # Condition and origin
+        "condition": car.condition,
+        "vehicle_origin": car.vehicle_origin,
+
+        # Listing content
+        "description": car.description,
+        "listing_status": car.listing_status,
     }
+
 
 
 def image_to_dict(image: VehicleImage):
@@ -497,8 +530,10 @@ def health():
     }
 
 
+
 # --------------------------------------------------
 # PUBLIC VEHICLE LISTINGS
+# Only active vehicles appear in Explore Vehicles.
 # --------------------------------------------------
 
 @app.get("/api/v1/cars")
@@ -506,7 +541,9 @@ def list_cars(
     db: Session = Depends(get_db),
 ):
     cars = db.scalars(
-        select(Vehicle).order_by(Vehicle.id)
+        select(Vehicle)
+        .where(Vehicle.listing_status == "active")
+        .order_by(Vehicle.id)
     ).all()
 
     data = [vehicle_to_dict(car) for car in cars]
@@ -522,6 +559,11 @@ def list_cars(
     }
 
 
+# --------------------------------------------------
+# PUBLIC VEHICLE DETAILS
+# Draft, sold and withdrawn vehicles are not public.
+# --------------------------------------------------
+
 @app.get("/api/v1/cars/{car_id}")
 def get_car(
     car_id: int,
@@ -529,13 +571,14 @@ def get_car(
 ):
     car = db.get(Vehicle, car_id)
 
-    if car is None:
+    if car is None or car.listing_status != "active":
         raise HTTPException(
             status_code=404,
             detail="Vehicle not found",
         )
 
     return vehicle_to_dict(car)
+
 
 
 # --------------------------------------------------
@@ -566,8 +609,10 @@ def create_car(
     return vehicle_to_dict(car)
 
 
+
 # --------------------------------------------------
 # EDIT VEHICLE - OWNER OR ADMIN
+# Supports clearing optional vehicle specifications.
 # --------------------------------------------------
 
 @app.patch("/api/v1/cars/{car_id}")
@@ -580,6 +625,9 @@ def update_car(
 ):
     verify_write_origin(request)
 
+    # Existing security helper:
+    # Owner can edit their own listing.
+    # Admin can edit any listing.
     car = require_listing_access(
         car_id,
         db,
@@ -590,19 +638,78 @@ def update_car(
         exclude_unset=True
     )
 
+    required_fields = {
+        "make",
+        "model",
+        "year",
+        "price_nzd",
+        "mileage_km",
+        "location",
+    }
+
+    nullable_fields = {
+        "variant",
+        "registration_plate",
+        "vin",
+        "body_type",
+        "exterior_colour",
+        "seats",
+        "fuel_type",
+        "transmission",
+        "drivetrain",
+        "engine_cc",
+        "condition",
+        "vehicle_origin",
+        "wof_expiry",
+        "registration_expiry",
+        "description",
+    }
+
+    allowed_statuses = {
+        "active",
+        "draft",
+        "sold",
+        "withdrawn",
+    }
+
     for field, value in updates.items():
-        if value is None:
+        # Required vehicle fields must remain populated.
+        if field in required_fields and value is None:
             raise HTTPException(
                 status_code=422,
                 detail=f"{field} cannot be null",
             )
 
-        setattr(car, field, value)
+        # Optional specifications may be cleared.
+        if field in nullable_fields:
+            setattr(car, field, value)
+            continue
+
+        # Listing status must always be a valid value.
+        if field == "listing_status":
+            if value not in allowed_statuses:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Invalid listing status",
+                )
+
+            setattr(car, field, value)
+            continue
+
+        if field in required_fields:
+            setattr(car, field, value)
+            continue
+
+        raise HTTPException(
+            status_code=422,
+            detail=f"Updating {field} is not permitted",
+        )
 
     db.commit()
     db.refresh(car)
 
     return vehicle_to_dict(car)
+
 
 
 # --------------------------------------------------

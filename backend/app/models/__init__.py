@@ -1,13 +1,22 @@
 
-from sqlalchemy import Integer, String, ForeignKey, UniqueConstraint
+from datetime import date
+
+from sqlalchemy import (
+    Date,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
 
-# --------------------------------------------------
+# ==================================================
 # VEHICLE MODEL
-# --------------------------------------------------
+# ==================================================
 
 class Vehicle(Base):
     __tablename__ = "vehicles"
@@ -17,6 +26,7 @@ class Vehicle(Base):
         primary_key=True,
     )
 
+    # Basic vehicle information
     make: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
@@ -47,17 +57,128 @@ class Vehicle(Base):
         nullable=False,
     )
 
-    # Existing demonstration vehicles can remain unassigned.
+    # Existing ownership and permissions
     owner_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
 
+    # ----------------------------------------------
+    # Vehicle identity
+    # ----------------------------------------------
 
-# --------------------------------------------------
-# VEHICLE IMAGE MODEL
-# --------------------------------------------------
+    variant: Mapped[str | None] = mapped_column(
+        String(150),
+        nullable=True,
+    )
+
+    registration_plate: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+
+    vin: Mapped[str | None] = mapped_column(
+        String(17),
+        nullable=True,
+    )
+
+    # ----------------------------------------------
+    # Body and appearance
+    # ----------------------------------------------
+
+    body_type: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        index=True,
+    )
+
+    exterior_colour: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    seats: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    # ----------------------------------------------
+    # Mechanical specifications
+    # ----------------------------------------------
+
+    fuel_type: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        index=True,
+    )
+
+    transmission: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        index=True,
+    )
+
+    drivetrain: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+    )
+
+    engine_cc: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    # ----------------------------------------------
+    # Condition and vehicle origin
+    # ----------------------------------------------
+
+    condition: Mapped[str | None] = mapped_column(
+        String(30),
+        nullable=True,
+        index=True,
+    )
+
+    vehicle_origin: Mapped[str | None] = mapped_column(
+        String(30),
+        nullable=True,
+    )
+
+    # ----------------------------------------------
+    # Compliance
+    # ----------------------------------------------
+
+    wof_expiry: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+    )
+
+    registration_expiry: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+    )
+
+    # ----------------------------------------------
+    # Listing information
+    # ----------------------------------------------
+
+    description: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    listing_status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="active",
+        server_default="active",
+        index=True,
+    )
+
+
+# ==================================================
+# VEHICLE IMAGES
+# ==================================================
 
 class VehicleImage(Base):
     __tablename__ = "vehicle_images"
@@ -93,9 +214,9 @@ class VehicleImage(Base):
     )
 
 
-# --------------------------------------------------
-# VEHICLE MAKE CATALOGUE
-# --------------------------------------------------
+# ==================================================
+# VEHICLE MANUFACTURER CATALOGUE
+# ==================================================
 
 class VehicleMake(Base):
     __tablename__ = "vehicle_makes"
@@ -117,9 +238,9 @@ class VehicleMake(Base):
     )
 
 
-# --------------------------------------------------
+# ==================================================
 # VEHICLE MODEL CATALOGUE
-# --------------------------------------------------
+# ==================================================
 
 class VehicleModel(Base):
     __tablename__ = "vehicle_models"
@@ -138,7 +259,10 @@ class VehicleModel(Base):
     )
 
     make_id: Mapped[int] = mapped_column(
-        ForeignKey("vehicle_makes.id", ondelete="RESTRICT"),
+        ForeignKey(
+            "vehicle_makes.id",
+            ondelete="RESTRICT",
+        ),
         nullable=False,
         index=True,
     )
@@ -154,9 +278,9 @@ class VehicleModel(Base):
     )
 
 
-# --------------------------------------------------
+# ==================================================
 # AUTHENTICATION MODELS
-# --------------------------------------------------
+# ==================================================
 
 from .user import User
 from .user_session import UserSession
