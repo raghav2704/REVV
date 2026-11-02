@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from typing import Annotated
 from app.routes.vehicle_catalogue import router as vehicle_catalogue_router
 from app.vehicle_spec_schemas import VehicleCreate, VehicleUpdate
+from app.routes.messaging import router as messaging_router
 
 from fastapi import (
     Depends,
@@ -49,6 +50,8 @@ app = FastAPI(
 
 app.include_router(auth_router)
 app.include_router(vehicle_catalogue_router)
+app.include_router(messaging_router)
+
 
 
 # --------------------------------------------------
