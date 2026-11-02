@@ -25,6 +25,17 @@ export type Car = {
   price_nzd: number;
   mileage_km: number;
   location: string;
+  variant?: string | null;
+  body_type?: string | null;
+  exterior_colour?: string | null;
+  seats?: number | null;
+  fuel_type?: string | null;
+  transmission?: string | null;
+  drivetrain?: string | null;
+  engine_cc?: number | null;
+  condition?: string | null;
+  vehicle_origin?: string | null;
+  description?: string | null;
   images?: VehiclePhoto[];
 };
 
@@ -50,6 +61,16 @@ type SortOption =
 
 const inputClass =
   "w-full min-h-12 rounded-xl border border-[#30415D] bg-[#111E32] px-4 py-3 text-sm text-white placeholder:text-slate-400 outline-none transition hover:border-blue-400/50 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50";
+
+const SPEC_OPTIONS = {
+  body_type: ["Sedan", "SUV", "Hatchback", "Wagon", "Coupe", "Convertible", "Ute", "Van", "People Mover", "Other"],
+  fuel_type: ["Petrol", "Diesel", "Hybrid", "Plug-in Hybrid", "Electric", "Other"],
+  transmission: ["Automatic", "Manual", "CVT", "Other"],
+  drivetrain: ["FWD", "RWD", "AWD", "4WD", "Other"],
+  condition: ["New", "Used", "Demonstrator"],
+} as const;
+
+type SpecFilter = keyof typeof SPEC_OPTIONS;
 
 const labelClass =
   "mb-2 block text-xs font-bold uppercase tracking-[0.1em] text-slate-300";
@@ -280,6 +301,12 @@ function VehicleCard({ car }: { car: Car }) {
               <span>{number(car.mileage_km)} km</span>
             </div>
 
+            {(car.fuel_type || car.transmission || car.body_type) && (
+              <p className="line-clamp-1 text-xs font-semibold text-slate-600">
+                {[car.body_type, car.fuel_type, car.transmission].filter(Boolean).join(" · ")}
+              </p>
+            )}
+
             <div className="flex items-center gap-3">
               <span aria-hidden="true">⌖</span>
               <span className="truncate">
@@ -333,6 +360,17 @@ export default function CarSearch({
   const [maxMileage, setMaxMileage] = useState("");
 
   const [location, setLocation] = useState("");
+  const [specFilters, setSpecFilters] = useState<Record<SpecFilter, string>>({
+    body_type: "",
+    fuel_type: "",
+    transmission: "",
+    drivetrain: "",
+    condition: "",
+  });
+
+  function setSpecFilter(field: SpecFilter, value: string) {
+    setSpecFilters((previous) => ({ ...previous, [field]: value }));
+  }
   const [sort, setSort] = useState<SortOption>("recent");
 
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -565,6 +603,16 @@ export default function CarSearch({
       }
 
       if (
+        (Object.keys(specFilters) as SpecFilter[]).some(
+          (field) =>
+            specFilters[field] !== "" &&
+            (car[field] ?? "").toLowerCase() !== specFilters[field].toLowerCase()
+        )
+      ) {
+        return false;
+      }
+
+      if (
         !matchesMin(car.price_nzd, minPrice) ||
         !matchesMax(car.price_nzd, maxPrice)
       ) {
@@ -620,6 +668,7 @@ export default function CarSearch({
     make,
     model,
     location,
+    specFilters,
     minYear,
     maxYear,
     minPrice,
@@ -634,6 +683,7 @@ export default function CarSearch({
       make ||
       model ||
       location ||
+      Object.values(specFilters).some(Boolean) ||
       minYear ||
       maxYear ||
       minPrice ||
@@ -648,6 +698,7 @@ export default function CarSearch({
     make,
     model,
     location,
+    ...Object.values(specFilters),
     minYear,
     maxYear,
     minPrice,
@@ -669,6 +720,7 @@ export default function CarSearch({
     setMinMileage("");
     setMaxMileage("");
     setLocation("");
+    setSpecFilters({body_type: "", fuel_type: "", transmission: "", drivetrain: "", condition: ""});
     setSort("recent");
   }
 
@@ -1054,6 +1106,34 @@ export default function CarSearch({
                   className={inputClass}
                 />
               </div>
+
+              {/* VEHICLE SPECIFICATIONS V2 */}
+              {(
+                [
+                  ["body_type", "Body type"],
+                  ["fuel_type", "Fuel type"],
+                  ["transmission", "Transmission"],
+                  ["drivetrain", "Drivetrain"],
+                  ["condition", "Condition"],
+                ] as const
+              ).map(([field, label]) => (
+                <div key={field}>
+                  <label htmlFor={`marketplace-${field}`} className={labelClass}>
+                    {label}
+                  </label>
+                  <select
+                    id={`marketplace-${field}`}
+                    value={specFilters[field]}
+                    onChange={(event) => setSpecFilter(field, event.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="">Any {label.toLowerCase()}</option>
+                    {SPEC_OPTIONS[field].map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
             </div>
           )}
 
@@ -1182,7 +1262,7 @@ export default function CarSearch({
           <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-slate-500">
             {cars.length === 0
               ? "There aren't any vehicles to display yet."
-              : "Try adjusting your manufacturer, model, price, year, mileage or location filters."}
+              : "Try adjusting your make, model, price, year, mileage, location or vehicle specifications filters."}
           </p>
 
           {hasFilters && (
