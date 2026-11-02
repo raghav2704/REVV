@@ -12,3 +12,22 @@ body {
   margin: 0;
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Smooth scrolling across REVV */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Prevent the sticky navbar from covering sections */
+#explore,
+#intelligence,
+#dealer-platform {
+  scroll-margin-top: 90px;
+}
+
+/* Respect accessibility preferences */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
