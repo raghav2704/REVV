@@ -6,6 +6,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from typing import Annotated
 from pydantic import BaseModel, Field
+from app.routes.vehicle_catalogue import router as vehicle_catalogue_router
+
 
 
 from fastapi import (
@@ -47,6 +49,7 @@ app = FastAPI(
 )
 
 app.include_router(auth_router)
+app.include_router(vehicle_catalogue_router)
 
 # --------------------------------------------------
 # CORS

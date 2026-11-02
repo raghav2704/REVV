@@ -1,5 +1,5 @@
 
-from sqlalchemy import Integer, String, ForeignKey
+from sqlalchemy import Integer, String, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -47,7 +47,6 @@ class Vehicle(Base):
         nullable=False,
     )
 
-    # Links a vehicle to the account that created it.
     # Existing demonstration vehicles can remain unassigned.
     owner_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -91,6 +90,67 @@ class VehicleImage(Base):
 
     vehicle: Mapped["Vehicle"] = relationship(
         "Vehicle",
+    )
+
+
+# --------------------------------------------------
+# VEHICLE MAKE CATALOGUE
+# --------------------------------------------------
+
+class VehicleMake(Base):
+    __tablename__ = "vehicle_makes"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        unique=True,
+    )
+
+    models: Mapped[list["VehicleModel"]] = relationship(
+        "VehicleModel",
+        back_populates="make",
+    )
+
+
+# --------------------------------------------------
+# VEHICLE MODEL CATALOGUE
+# --------------------------------------------------
+
+class VehicleModel(Base):
+    __tablename__ = "vehicle_models"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "make_id",
+            "name",
+            name="uq_vehicle_models_make_name",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+    )
+
+    make_id: Mapped[int] = mapped_column(
+        ForeignKey("vehicle_makes.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    make: Mapped["VehicleMake"] = relationship(
+        "VehicleMake",
+        back_populates="models",
     )
 
 
