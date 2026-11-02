@@ -6,6 +6,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 const API = "http://127.0.0.1:8000";
 
+
+
 type Vehicle = {
   id: number;
   make: string;
@@ -74,6 +76,13 @@ async function responseError(response: Response) {
     throw new Error(`Request failed (${response.status}).`);
   }
 }
+
+<Link
+  href="/seller-studio"
+  className="inline-flex items-center rounded-xl bg-blue-600 px-5 py-3 font-bold text-white transition hover:bg-blue-500"
+>
+  Open Seller Studio →
+</Link>
 
 function StatCard({
   label,
