@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
+import MessagesNavLink from "@/components/MessagesNavLink";
 
 const API = "http://127.0.0.1:8000";
 
@@ -59,7 +60,9 @@ export default function Navbar() {
           setUser(null);
         }
       } finally {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       }
     }
 
@@ -100,12 +103,16 @@ export default function Navbar() {
   return (
     <header className="sticky top-0 z-50 border-b border-white/10 bg-[#090d14] text-white">
       <nav className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
+        {/* REVV LOGO */}
+
         <Link
           href="/"
           className="text-3xl font-black tracking-[-0.08em]"
         >
           REV<span className="text-blue-500">V</span>
         </Link>
+
+        {/* NAVIGATION */}
 
         <div className="flex flex-wrap items-center gap-4 text-sm font-medium sm:gap-6">
           <Link
@@ -121,12 +128,20 @@ export default function Navbar() {
             </span>
           ) : user ? (
             <>
+              {/* MY LISTINGS */}
+
               <Link
                 href="/my-listings"
                 className="transition hover:text-blue-400"
               >
                 My Listings
               </Link>
+
+              {/* REVV MESSAGES */}
+
+              <MessagesNavLink />
+
+              {/* ADMIN DASHBOARD */}
 
               {user.role === "admin" && (
                 <Link
@@ -137,11 +152,11 @@ export default function Navbar() {
                 </Link>
               )}
 
+              {/* ACCOUNT */}
+
               <div className="flex items-center gap-2">
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-sm font-bold">
-                  {user.full_name
-                    .charAt(0)
-                    .toUpperCase()}
+                  {user.full_name.charAt(0).toUpperCase()}
                 </div>
 
                 <span className="hidden max-w-32 truncate text-zinc-300 md:block">
@@ -149,15 +164,15 @@ export default function Navbar() {
                 </span>
               </div>
 
+              {/* LOGOUT */}
+
               <button
                 type="button"
                 onClick={() => void logout()}
                 disabled={loggingOut}
                 className="rounded-lg border border-white/20 px-4 py-2.5 font-semibold transition hover:bg-white/10 disabled:opacity-50"
               >
-                {loggingOut
-                  ? "Logging out..."
-                  : "Logout"}
+                {loggingOut ? "Logging out..." : "Logout"}
               </button>
             </>
           ) : (
@@ -178,6 +193,8 @@ export default function Navbar() {
             </>
           )}
 
+          {/* SELL YOUR CAR */}
+
           <Link
             href={user ? "/sell" : "/login"}
             className="rounded-lg bg-blue-600 px-5 py-2.5 font-semibold transition hover:bg-blue-500"
@@ -186,6 +203,8 @@ export default function Navbar() {
           </Link>
         </div>
       </nav>
+
+      {/* ERROR MESSAGE */}
 
       {error && (
         <div

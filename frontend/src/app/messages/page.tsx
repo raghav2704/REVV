@@ -2,26 +2,35 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type FormEvent,
 } from "react";
 
 const API = "http://127.0.0.1:8000";
 
+type Account = {
+  id: number;
+  full_name?: string;
+  role?: string;
+};
+
 type Conversation = {
   id: number;
   vehicle_id: number;
   buyer_id: number;
   seller_id: number;
+  buyer_name: string;
+  seller_name: string;
   year: number;
   make: string;
   model: string;
   last_message: string | null;
   unread_count: number;
+  updated_at: string;
 };
 
 type Message = {
@@ -33,131 +42,205 @@ type Message = {
   read_at: string | null;
 };
 
-type Account = {
-  id: number;
+type MessageHistory = {
+  messages: Message[];
+  has_more: boolean;
 };
 
-async function readResponse<T>(
-  response: Response
+async function api<T>(
+  path: string,
+  options: RequestInit = {}
 ): Promise<T> {
-  const data = await response.json().catch(() => null);
+  const response = await fetch(`${API}${path}`, {
+    ...options,
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  const result = await response.json().catch(() => null);
 
   if (!response.ok) {
     if (response.status === 401) {
-      throw new Error("Please sign in to view your messages.");
+      throw new Error("Please log in to access your messages.");
     }
 
     throw new Error(
-      typeof data?.detail === "string"
-        ? data.detail
+      typeof result?.detail === "string"
+        ? result.detail
         : `Request failed (${response.status})`
     );
   }
 
-  return data as T;
+  return result as T;
+}
+
+function timeLabel(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "";
+
+  return date.toLocaleTimeString("en-NZ", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function dayLabel(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "";
+
+  return date.toLocaleDateString("en-NZ", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function initials(name: string) {
+  return (
+    name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part.charAt(0).toUpperCase())
+      .join("") || "?"
+  );
+}
+
+function getOtherName(
+  thread: Conversation,
+  userId: number
+) {
+  return thread.seller_id === userId
+    ? thread.buyer_name
+    : thread.seller_name;
 }
 
 export default function MessagesPage() {
-  const params = useSearchParams();
-  const requestedId = Number(params.get("conversation"));
-
   const [account, setAccount] = useState<Account | null>(null);
   const [threads, setThreads] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [draft, setDraft] = useState("");
+
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState("");
 
-  const selected = threads.find((t) => t.id === selectedId);
+  const selectedIdRef = useRef<number | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const firstLoadRef = useRef(true);
 
-  const loadThreads = useCallback(async () => {
-    const response = await fetch(
-      `${API}/api/v1/messages/conversations`,
-      { credentials: "include", cache: "no-store" }
+  const selected = threads.find(
+    (thread) => thread.id === selectedId
+  );
+
+  const totalUnread = threads.reduce(
+    (sum, thread) => sum + Number(thread.unread_count || 0),
+    0
+  );
+
+  const otherName =
+    selected && account
+      ? getOtherName(selected, account.id)
+      : "";
+
+  const amSeller =
+    selected !== undefined &&
+    account !== null &&
+    selected.seller_id === account.id;
+
+  const refreshThreads = useCallback(async () => {
+    const result = await api<{ data: Conversation[] }>(
+      "/api/v1/messages/conversations"
     );
 
-    const result = await readResponse<{
-      data: Conversation[];
-    }>(response);
-
     if (!Array.isArray(result.data)) {
-      throw new Error("Invalid conversations response.");
+      throw new Error("Invalid inbox response.");
     }
 
     setThreads(result.data);
+    return result.data;
+  }, []);
 
-    setSelectedId((current) => {
-      if (current !== null &&
-          result.data.some((t) => t.id === current)) {
-        return current;
-      }
-
-      if (Number.isInteger(requestedId) && requestedId > 0) {
-        return result.data.find((t) => t.id === requestedId)?.id ??
-          result.data[0]?.id ?? null;
-      }
-
-      return result.data[0]?.id ?? null;
-    });
-  }, [requestedId]);
-
-  const loadMessages = useCallback(async (id: number) => {
-    const response = await fetch(
-      `${API}/api/v1/messages/conversations/${id}`,
-      { credentials: "include", cache: "no-store" }
+  const fetchMessages = useCallback(async (id: number) => {
+    const result = await api<MessageHistory>(
+      `/api/v1/messages/conversations/${id}`
     );
-
-    const result = await readResponse<{
-      messages: Message[];
-    }>(response);
 
     if (!Array.isArray(result.messages)) {
       throw new Error("Invalid message history.");
     }
 
-    setMessages(result.messages);
+    if (selectedIdRef.current === id) {
+      setMessages(result.messages);
+      setHasMore(Boolean(result.has_more));
+    }
+  }, []);
+
+  const markRead = useCallback(async (id: number) => {
+    await api(
+      `/api/v1/messages/conversations/${id}/read`,
+      { method: "POST" }
+    );
   }, []);
 
   useEffect(() => {
-    let active = true;
+    let cancelled = false;
 
-    async function init() {
+    async function initialize() {
       try {
-        const response = await fetch(
-          `${API}/api/v1/auth/me`,
-          { credentials: "include", cache: "no-store" }
+        const auth = await api<
+          Account | { data: Account }
+        >("/api/v1/auth/me");
+
+        const user = "data" in auth ? auth.data : auth;
+
+        if (!user || !Number.isInteger(user.id)) {
+          throw new Error("Invalid account session.");
+        }
+
+        if (cancelled) return;
+        setAccount(user);
+
+        const list = await refreshThreads();
+        if (cancelled) return;
+
+        const requested = Number(
+          new URLSearchParams(
+            window.location.search
+          ).get("conversation")
         );
 
-        const result = await readResponse<
-          Account | { data: Account }
-        >(response);
+        const initial =
+          list.find((t) => t.id === requested)?.id ??
+          list[0]?.id ??
+          null;
 
-        if (!active) return;
-
-        const currentAccount =
-          "data" in result ? result.data : result;
-
-        setAccount(currentAccount);
-        await loadThreads();
+        setSelectedId(initial);
       } catch (err) {
-        if (active) {
+        if (!cancelled) {
           setError(
-            err instanceof Error ? err.message : "Inbox unavailable."
+            err instanceof Error
+              ? err.message
+              : "Unable to load your inbox."
           );
         }
       } finally {
-        if (active) setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
-    void init();
+    void initialize();
 
     return () => {
-      active = false;
+      cancelled = true;
     };
-  }, [loadThreads]);
+  }, [refreshThreads]);
 
   useEffect(() => {
     if (selectedId === null) {
@@ -165,239 +248,568 @@ export default function MessagesPage() {
       return;
     }
 
-    let active = true;
+    let cancelled = false;
+    const id = selectedId;
+
+    selectedIdRef.current = id;
+    firstLoadRef.current = true;
+
+    setChatLoading(true);
     setMessages([]);
 
-    async function refresh() {
+    async function load() {
       try {
-        const response = await fetch(
-          `${API}/api/v1/messages/conversations/${selectedId}`,
-          { credentials: "include", cache: "no-store" }
+        const result = await api<MessageHistory>(
+          `/api/v1/messages/conversations/${id}`
         );
 
-        const result = await readResponse<{
-          messages: Message[];
-        }>(response);
+        if (cancelled) return;
 
-        if (active) setMessages(result.messages);
+        setMessages(result.messages);
+        setHasMore(Boolean(result.has_more));
+
+        await markRead(id);
+
+        if (!cancelled) {
+          await refreshThreads();
+          setError("");
+        }
       } catch (err) {
-        if (active) {
+        if (!cancelled) {
           setError(
-            err instanceof Error ? err.message : "Unable to load messages."
+            err instanceof Error
+              ? err.message
+              : "Unable to load messages."
           );
         }
+      } finally {
+        if (!cancelled) setChatLoading(false);
       }
     }
 
-    void refresh();
-
-    const timer = window.setInterval(() => {
-      void refresh();
-      void loadThreads().catch(() => {});
-    }, 5000);
+    void load();
 
     return () => {
-      active = false;
-      window.clearInterval(timer);
+      cancelled = true;
     };
-  }, [selectedId, loadThreads]);
+  }, [selectedId, markRead, refreshThreads]);
 
-  async function sendMessage(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  useEffect(() => {
+    if (!account) return;
 
-    if (!selectedId || !draft.trim() || busy) return;
+    const interval = window.setInterval(async () => {
+      if (document.visibilityState === "hidden") return;
 
-    setBusy(true);
+      try {
+        await refreshThreads();
+
+        const id = selectedIdRef.current;
+
+        if (id !== null) {
+          await fetchMessages(id);
+          await markRead(id);
+          await refreshThreads();
+        }
+      } catch {
+        // A temporary network issue shouldn't erase the chat.
+      }
+    }, 5000);
+
+    return () => window.clearInterval(interval);
+  }, [account, refreshThreads, fetchMessages, markRead]);
+
+  useEffect(() => {
+    if (messages.length === 0) return;
+
+    if (firstLoadRef.current) {
+      bottomRef.current?.scrollIntoView({
+        behavior: "instant",
+      });
+
+      firstLoadRef.current = false;
+    }
+  }, [messages]);
+
+  async function loadOlderMessages() {
+    if (
+      selectedId === null ||
+      loadingOlder ||
+      !hasMore ||
+      messages.length === 0
+    ) {
+      return;
+    }
+
+    const id = selectedId;
+    const beforeId = messages[0].id;
+
+    setLoadingOlder(true);
     setError("");
 
     try {
-      const response = await fetch(
-        `${API}/api/v1/messages/conversations/${selectedId}/messages`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: draft.trim() }),
-        }
+      const result = await api<MessageHistory>(
+        `/api/v1/messages/conversations/${id}?before_id=${beforeId}`
       );
 
-      await readResponse<Message>(response);
+      if (selectedIdRef.current !== id) return;
 
-      setDraft("");
-      await loadMessages(selectedId);
-      await loadThreads();
+      setMessages((previous) => {
+        const existingIds = new Set(
+          previous.map((message) => message.id)
+        );
+
+        return [
+          ...result.messages.filter(
+            (message) => !existingIds.has(message.id)
+          ),
+          ...previous,
+        ];
+      });
+
+      setHasMore(Boolean(result.has_more));
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Message failed."
+        err instanceof Error
+          ? err.message
+          : "Unable to load older messages."
       );
     } finally {
-      setBusy(false);
+      setLoadingOlder(false);
     }
   }
 
-  if (loading) {
-    return (
-      <main className="min-h-screen bg-[#080F1C] p-10 text-white">
-        Loading REVV Messages...
-      </main>
+  async function send(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const id = selectedId;
+    const content = draft.trim();
+
+    if (!id || !content || sending) return;
+
+    setSending(true);
+    setError("");
+
+    try {
+      await api(
+        `/api/v1/messages/conversations/${id}/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ message: content }),
+        }
+      );
+
+      setDraft("");
+      await fetchMessages(id);
+      await refreshThreads();
+
+      bottomRef.current?.scrollIntoView({
+        behavior: "smooth",
+      });
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not send your message."
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function chooseConversation(id: number) {
+    setSelectedId(id);
+    setError("");
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("conversation", String(id));
+
+    window.history.replaceState(
+      null,
+      "",
+      url.pathname + url.search
     );
   }
 
+  const panelClass =
+    "overflow-hidden rounded-2xl border border-white/10 bg-[#111E32]";
+
   return (
-    <main className="min-h-screen bg-[#080F1C] px-4 py-10 text-white">
-      <div className="mx-auto max-w-6xl">
-        <Link
-          href="/"
-          className="text-sm font-medium text-blue-400"
-        >
-          ← Back to REVV
-        </Link>
+    <main className="min-h-screen bg-[#080F1C] px-4 py-8 text-white sm:px-6">
+      <div className="mx-auto max-w-7xl">
+        {/* HEADER */}
 
-        <h1 className="mt-7 text-4xl font-black">
-          REVV Messages
-        </h1>
+        <div className="mb-8">
+          <Link
+            href="/"
+            className="text-sm font-semibold text-blue-400 hover:text-blue-300"
+          >
+            ← Back to REVV
+          </Link>
 
-        <p className="mt-2 text-slate-400">
-          Secure conversations about your vehicles.
-        </p>
+          <div className="mt-7 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-400">
+                REVV / COMMUNICATIONS
+              </p>
+
+              <h1 className="mt-2 text-3xl font-black sm:text-4xl">
+                Your Messages
+              </h1>
+
+              <p className="mt-2 text-sm text-slate-400">
+                Connect with buyers and sellers securely.
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 py-3">
+              <p className="text-xs text-slate-400">
+                Unread messages
+              </p>
+
+              <p className="mt-1 text-2xl font-black text-blue-300">
+                {totalUnread}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* ERRORS */}
 
         {error && (
           <div
             role="alert"
-            className="mt-5 rounded-xl border border-red-500/30 bg-red-950/40 p-4 text-red-200"
+            className="mb-5 rounded-xl border border-red-500/30 bg-red-950/30 p-4 text-sm text-red-200"
           >
             {error}
           </div>
         )}
 
-        <div className="mt-8 grid min-h-[550px] gap-4 lg:grid-cols-[320px_1fr]">
-          <aside className="overflow-hidden rounded-2xl border border-white/10 bg-[#111E32]">
-            <div className="border-b border-white/10 p-5">
-              <h2 className="font-bold">Inbox</h2>
-              <p className="mt-1 text-xs text-slate-400">
-                {threads.length} conversations
-              </p>
-            </div>
+        {loading ? (
+          <div className="rounded-2xl bg-[#111E32] p-12 text-center text-slate-300">
+            Loading your inbox...
+          </div>
+        ) : !account ? (
+          <div className="rounded-2xl bg-[#111E32] p-10 text-center">
+            <p className="text-slate-300">
+              Sign in to access your conversations.
+            </p>
 
-            <div className="max-h-[650px] overflow-y-auto">
-              {threads.length === 0 ? (
-                <p className="p-5 text-sm text-slate-400">
-                  No conversations yet.
-                </p>
-              ) : (
-                threads.map((thread) => (
-                  <button
-                    key={thread.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedId(thread.id);
-                      setError("");
-                    }}
-                    className={`w-full border-b border-white/5 p-5 text-left transition hover:bg-[#1B304D] ${
-                      selectedId === thread.id
-                        ? "bg-[#20395A]"
-                        : ""
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-bold">
-                        {thread.year} {thread.make} {thread.model}
-                      </span>
+            <Link
+              href="/login"
+              className="mt-5 inline-block rounded-xl bg-blue-600 px-6 py-3 font-bold"
+            >
+              Sign in
+            </Link>
+          </div>
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
+            {/* INBOX */}
 
-                      {thread.unread_count > 0 && (
-                        <span className="rounded-full bg-blue-600 px-2 py-1 text-xs">
-                          {thread.unread_count}
-                        </span>
-                      )}
-                    </div>
-
-                    <p className="mt-2 truncate text-xs text-slate-400">
-                      {thread.last_message || "No messages yet"}
-                    </p>
-                  </button>
-                ))
-              )}
-            </div>
-          </aside>
-
-          <section className="flex min-h-[550px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#111E32]">
-            {!selected ? (
-              <div className="flex flex-1 items-center justify-center p-8 text-slate-400">
-                Select a conversation to begin.
-              </div>
-            ) : (
-              <>
-                <div className="border-b border-white/10 bg-[#132239] p-5">
+            <aside className={panelClass}>
+              <div className="border-b border-white/10 bg-[#132239] p-5">
+                <div className="flex items-center justify-between">
                   <h2 className="text-lg font-bold">
-                    {selected.year} {selected.make} {selected.model}
+                    Inbox
                   </h2>
 
-                  <Link
-                    href={`/cars/${selected.vehicle_id}`}
-                    className="mt-1 inline-block text-xs text-blue-300 hover:underline"
-                  >
-                    View vehicle listing
-                  </Link>
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs text-slate-300">
+                    {threads.length}
+                  </span>
                 </div>
 
-                <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
-                  {messages.map((message) => {
-                    const mine = message.sender_id === account?.id;
+                <p className="mt-1 text-xs text-slate-400">
+                  Your conversations
+                </p>
+              </div>
+
+              <div className="max-h-[650px] overflow-y-auto">
+                {threads.length === 0 ? (
+                  <div className="p-8 text-center">
+                    <p className="text-4xl">💬</p>
+
+                    <p className="mt-3 font-semibold">
+                      No conversations yet
+                    </p>
+
+                    <p className="mt-2 text-sm text-slate-400">
+                      Your buyer and seller enquiries will appear here.
+                    </p>
+                  </div>
+                ) : (
+                  threads.map((thread) => {
+                    const active = thread.id === selectedId;
+
+                    const sellerViewing =
+                      thread.seller_id === account.id;
+
+                    const name = getOtherName(
+                      thread,
+                      account.id
+                    );
 
                     return (
-                      <div
-                        key={message.id}
-                        className={`flex ${
-                          mine ? "justify-end" : "justify-start"
+                      <button
+                        type="button"
+                        key={thread.id}
+                        onClick={() =>
+                          chooseConversation(thread.id)
+                        }
+                        className={`w-full border-b border-white/5 p-5 text-left transition ${
+                          active
+                            ? "border-l-4 border-l-blue-500 bg-[#20395A]"
+                            : "hover:bg-[#192D47]"
                         }`}
                       >
-                        <div
-                          className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm ${
-                            mine
-                              ? "bg-blue-600 text-white"
-                              : "bg-[#263A55] text-slate-100"
-                          }`}
-                        >
-                          <p className="whitespace-pre-wrap break-words">
-                            {message.body}
-                          </p>
+                        <div className="flex items-start gap-3">
+                          {/* ACCOUNT AVATAR */}
 
-                          <p className="mt-2 text-[10px] opacity-65">
-                            {new Date(
-                              message.created_at
-                            ).toLocaleString("en-NZ")}
-                          </p>
+                          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-600/25 text-sm font-black text-blue-200">
+                            {initials(name)}
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="truncate text-sm font-bold text-white">
+                                {name}
+                              </p>
+
+                              {thread.unread_count > 0 && (
+                                <span className="shrink-0 rounded-full bg-blue-600 px-2 py-0.5 text-xs font-bold">
+                                  {thread.unread_count}
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="mt-1 text-xs font-medium text-blue-300">
+                              {sellerViewing
+                                ? "Buyer"
+                                : "Seller"}
+                            </p>
+
+                            <p className="mt-1 truncate text-xs text-slate-300">
+                              {thread.year} {thread.make}{" "}
+                              {thread.model}
+                            </p>
+
+                            <p className="mt-2 truncate text-xs text-slate-400">
+                              {thread.last_message || "Start chatting"}
+                            </p>
+
+                            <p className="mt-2 text-[11px] text-slate-500">
+                              {dayLabel(thread.updated_at)}
+                            </p>
+                          </div>
                         </div>
-                      </div>
+                      </button>
                     );
-                  })}
+                  })
+                )}
+              </div>
+            </aside>
+
+            {/* CONVERSATION WINDOW */}
+
+            <section
+              className={`${panelClass} flex min-h-[600px] flex-col`}
+            >
+              {!selected ? (
+                <div className="flex flex-1 flex-col items-center justify-center p-10 text-center">
+                  <p className="text-5xl">🚘</p>
+
+                  <h2 className="mt-4 text-xl font-bold">
+                    Welcome to REVV Messages
+                  </h2>
+
+                  <p className="mt-2 max-w-sm text-sm leading-6 text-slate-400">
+                    Choose a conversation to start messaging.
+                  </p>
                 </div>
+              ) : (
+                <>
+                  {/* CONVERSATION HEADER */}
 
-                <form
-                  onSubmit={sendMessage}
-                  className="flex gap-3 border-t border-white/10 p-4"
-                >
-                  <input
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    maxLength={2000}
-                    disabled={busy}
-                    placeholder="Type your message..."
-                    className="min-w-0 flex-1 rounded-xl border border-white/15 bg-[#0B1628] px-4 py-3 text-sm text-white outline-none focus:border-blue-500"
-                  />
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-[#132239] p-5">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-black text-white">
+                        {initials(otherName)}
+                      </div>
 
-                  <button
-                    type="submit"
-                    disabled={busy || !draft.trim()}
-                    className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold hover:bg-blue-500 disabled:opacity-50"
-                  >
-                    {busy ? "Sending..." : "Send"}
-                  </button>
-                </form>
-              </>
-            )}
-          </section>
-        </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-lg font-bold text-white">
+                          {otherName}
+                        </p>
+
+                        <p className="mt-1 text-xs text-blue-300">
+                          {amSeller ? "Buyer" : "Seller"} · REVV account
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-400">
+                          {selected.year} {selected.make}{" "}
+                          {selected.model}
+                        </p>
+                      </div>
+                    </div>
+
+                    <Link
+                      href={`/cars/${selected.vehicle_id}`}
+                      className="rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-xs font-bold text-blue-200 transition hover:bg-white/10"
+                    >
+                      View vehicle →
+                    </Link>
+                  </div>
+
+                  {/* MESSAGE HISTORY */}
+
+                  <div className="flex h-[430px] flex-col gap-4 overflow-y-auto bg-[#0E192B] p-5 sm:p-7">
+                    {hasMore && (
+                      <button
+                        type="button"
+                        disabled={loadingOlder}
+                        onClick={() =>
+                          void loadOlderMessages()
+                        }
+                        className="self-center rounded-lg border border-white/15 px-4 py-2 text-xs font-bold text-blue-300 hover:bg-white/5 disabled:opacity-50"
+                      >
+                        {loadingOlder
+                          ? "Loading..."
+                          : "Load older messages"}
+                      </button>
+                    )}
+
+                    {chatLoading ? (
+                      <p className="text-center text-sm text-slate-400">
+                        Loading messages...
+                      </p>
+                    ) : messages.length === 0 ? (
+                      <p className="my-auto text-center text-sm text-slate-400">
+                        No messages yet.
+                      </p>
+                    ) : (
+                      messages.map((message) => {
+                        const mine =
+                          message.sender_id === account.id;
+
+                        const senderName = mine
+                          ? "You"
+                          : otherName;
+
+                        return (
+                          <div
+                            key={message.id}
+                            className={`flex ${
+                              mine
+                                ? "justify-end"
+                                : "justify-start"
+                            }`}
+                          >
+                            <div className="max-w-[85%] sm:max-w-[70%]">
+                              <div
+                                className={`mb-1 flex items-center gap-2 ${
+                                  mine
+                                    ? "justify-end"
+                                    : "justify-start"
+                                }`}
+                              >
+                                {!mine && (
+                                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#344E70] text-[9px] font-bold">
+                                    {initials(otherName)}
+                                  </div>
+                                )}
+
+                                <p className="text-[11px] font-semibold text-blue-300">
+                                  {senderName}
+                                </p>
+                              </div>
+
+                              <div
+                                className={`rounded-2xl px-4 py-3 shadow-sm ${
+                                  mine
+                                    ? "rounded-br-sm bg-blue-600"
+                                    : "rounded-bl-sm border border-white/5 bg-[#263A55]"
+                                }`}
+                              >
+                                <p className="whitespace-pre-wrap break-words text-sm leading-6 text-white">
+                                  {message.body}
+                                </p>
+
+                                <div className="mt-2 flex items-center justify-end gap-2">
+                                  <span className="text-[10px] text-white/65">
+                                    {timeLabel(
+                                      message.created_at
+                                    )}
+                                  </span>
+
+                                  {mine && (
+                                    <span className="text-[10px] text-white/70">
+                                      {message.read_at
+                                        ? "Read ✓✓"
+                                        : "Sent ✓"}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+
+                    <div ref={bottomRef} />
+                  </div>
+
+                  {/* MESSAGE COMPOSER */}
+
+                  <div className="border-t border-white/10 bg-[#132239] p-4 sm:p-5">
+                    <form
+                      onSubmit={send}
+                      className="flex items-end gap-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <label
+                          htmlFor="revv-message"
+                          className="mb-2 block text-xs font-medium text-slate-400"
+                        >
+                          Message {otherName}
+                        </label>
+
+                        <textarea
+                          id="revv-message"
+                          value={draft}
+                          onChange={(event) =>
+                            setDraft(event.target.value)
+                          }
+                          maxLength={2000}
+                          rows={2}
+                          disabled={sending}
+                          placeholder={`Write a message to ${otherName}...`}
+                          className="w-full resize-none rounded-xl border border-white/15 bg-[#0B1628] px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-blue-500"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={sending || !draft.trim()}
+                        className="rounded-xl bg-blue-600 px-5 py-3.5 text-sm font-bold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {sending
+                          ? "Sending..."
+                          : "Send →"}
+                      </button>
+                    </form>
+
+                    <p className="mt-3 text-xs text-slate-500">
+                      Stay safe: verify the vehicle and seller
+                      before making payments or deposits.
+                    </p>
+                  </div>
+                </>
+              )}
+            </section>
+          </div>
+        )}
       </div>
     </main>
   );

@@ -1,16 +1,13 @@
 
 """
-REVV Messaging Backend V1
+REVV Messaging V2
 
-Features:
-- Authenticated buyer-to-seller conversations
-- Vehicle-linked enquiries
-- Secure conversation access
-- Message history and pagination
-- Send messages and replies
+- Buyer and seller account names
+- Secure vehicle-linked conversations
+- Persistent message history
 - Inbox and unread counts
-- Mark messages as read
-- Basic anti-spam rate limiting
+- Message sending and read receipts
+- Basic rate limiting
 """
 
 from urllib.parse import urlsplit
@@ -22,11 +19,7 @@ from fastapi import (
     Request,
     status,
 )
-from pydantic import (
-    BaseModel,
-    Field,
-    field_validator,
-)
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -36,19 +29,10 @@ from app.models.user import User
 from app.routes.auth import get_current_user
 
 
-# ----------------------------------------
-# ROUTER
-# ----------------------------------------
-
 router = APIRouter(
     prefix="/api/v1/messages",
     tags=["Messaging"],
 )
-
-
-# ----------------------------------------
-# SECURITY CONFIGURATION
-# ----------------------------------------
 
 ALLOWED_ORIGINS = {
     "http://localhost:3000",
@@ -61,36 +45,23 @@ MAX_MESSAGE_LENGTH = 2000
 MAX_MESSAGES_PER_MINUTE = 10
 
 
-# ----------------------------------------
-# DATABASE
-# ----------------------------------------
-
 def get_db():
     db = SessionLocal()
-
     try:
         yield db
     finally:
         db.close()
 
 
-# ----------------------------------------
-# ORIGIN PROTECTION
-# ----------------------------------------
-
 def protect_write(request: Request):
     origin = request.headers.get("origin")
 
     if not origin:
         referer = request.headers.get("referer", "")
-
         if referer:
             parsed = urlsplit(referer)
-
             if parsed.scheme and parsed.netloc:
-                origin = (
-                    f"{parsed.scheme}://{parsed.netloc}"
-                )
+                origin = f"{parsed.scheme}://{parsed.netloc}"
 
     if origin not in ALLOWED_ORIGINS:
         raise HTTPException(
@@ -99,13 +70,8 @@ def protect_write(request: Request):
         )
 
 
-# ----------------------------------------
-# REQUEST SCHEMAS
-# ----------------------------------------
-
 class StartConversation(BaseModel):
     vehicle_id: int = Field(gt=0)
-
     message: str = Field(
         min_length=1,
         max_length=MAX_MESSAGE_LENGTH,
@@ -115,12 +81,8 @@ class StartConversation(BaseModel):
     @classmethod
     def validate_message(cls, value: str):
         value = value.strip()
-
         if not value:
-            raise ValueError(
-                "Message cannot be blank"
-            )
-
+            raise ValueError("Message cannot be blank")
         return value
 
 
@@ -134,50 +96,37 @@ class SendMessage(BaseModel):
     @classmethod
     def validate_message(cls, value: str):
         value = value.strip()
-
         if not value:
-            raise ValueError(
-                "Message cannot be blank"
-            )
-
+            raise ValueError("Message cannot be blank")
         return value
 
-
-# ----------------------------------------
-# CONVERSATION ACCESS CONTROL
-# ----------------------------------------
 
 def require_participant(
     conversation_id: int,
     user: User,
     db: Session,
 ):
-    """
-    Only the buyer or seller belonging to
-    a conversation may access it.
-
-    Admins do not automatically receive
-    access to private conversations.
-    """
-
     row = db.execute(
         text("""
             SELECT
-                id,
-                vehicle_id,
-                buyer_id,
-                seller_id,
-                created_at,
-                updated_at
-
-            FROM conversations
-
-            WHERE id = :conversation_id
-
-            AND (
-                buyer_id = :user_id
-                OR seller_id = :user_id
-            )
+                c.id,
+                c.vehicle_id,
+                c.buyer_id,
+                c.seller_id,
+                c.created_at,
+                c.updated_at,
+                buyer.full_name AS buyer_name,
+                seller.full_name AS seller_name
+            FROM conversations c
+            JOIN users buyer
+                ON buyer.id = c.buyer_id
+            JOIN users seller
+                ON seller.id = c.seller_id
+            WHERE c.id = :conversation_id
+              AND (
+                  c.buyer_id = :user_id
+                  OR c.seller_id = :user_id
+              )
         """),
         {
             "conversation_id": conversation_id,
@@ -194,62 +143,30 @@ def require_participant(
     return dict(row)
 
 
-# ----------------------------------------
-# RATE LIMITING
-# ----------------------------------------
-
-def enforce_rate_limit(
-    db: Session,
-    user_id: int,
-):
-    """
-    Basic PostgreSQL-backed limit.
-
-    A transaction-level advisory lock
-    serialises message creation for each
-    user across requests.
-    """
-
+def enforce_rate_limit(db: Session, user_id: int):
+    # Serialise sends for a user so concurrent requests
+    # cannot easily bypass this database-backed limit.
     db.execute(
-        text("""
-            SELECT pg_advisory_xact_lock(
-                :user_id
-            )
-        """),
-        {
-            "user_id": int(user_id),
-        },
+        text("SELECT pg_advisory_xact_lock(:user_id)"),
+        {"user_id": int(user_id)},
     )
 
     count = db.execute(
         text("""
             SELECT COUNT(*)
-
             FROM messages
-
             WHERE sender_id = :user_id
-
-            AND created_at >
-                NOW() - INTERVAL '1 minute'
+              AND created_at > NOW() - INTERVAL '1 minute'
         """),
-        {
-            "user_id": user_id,
-        },
+        {"user_id": user_id},
     ).scalar_one()
 
     if count >= MAX_MESSAGES_PER_MINUTE:
         raise HTTPException(
             status_code=429,
-            detail=(
-                "Too many messages. "
-                "Please try again shortly."
-            ),
+            detail="Too many messages. Please try again shortly.",
         )
 
-
-# ----------------------------------------
-# MESSAGE CREATION HELPER
-# ----------------------------------------
 
 def write_message(
     db: Session,
@@ -257,20 +174,18 @@ def write_message(
     sender_id: int,
     body: str,
 ):
-    message = db.execute(
+    row = db.execute(
         text("""
             INSERT INTO messages (
                 conversation_id,
                 sender_id,
                 body
             )
-
             VALUES (
                 :conversation_id,
                 :sender_id,
                 :body
             )
-
             RETURNING
                 id,
                 conversation_id,
@@ -289,22 +204,14 @@ def write_message(
     db.execute(
         text("""
             UPDATE conversations
-
             SET updated_at = NOW()
-
             WHERE id = :conversation_id
         """),
-        {
-            "conversation_id": conversation_id,
-        },
+        {"conversation_id": conversation_id},
     )
 
-    return dict(message)
+    return dict(row)
 
-
-# ----------------------------------------
-# START CONVERSATION
-# ----------------------------------------
 
 @router.post(
     "/conversations",
@@ -318,15 +225,9 @@ def start_conversation(
 ):
     protect_write(request)
 
-    vehicle = db.get(
-        Vehicle,
-        payload.vehicle_id,
-    )
+    vehicle = db.get(Vehicle, payload.vehicle_id)
 
-    if (
-        vehicle is None
-        or vehicle.listing_status != "active"
-    ):
+    if vehicle is None or vehicle.listing_status != "active":
         raise HTTPException(
             status_code=404,
             detail="Active vehicle not found",
@@ -335,83 +236,43 @@ def start_conversation(
     if vehicle.owner_id is None:
         raise HTTPException(
             status_code=409,
-            detail=(
-                "This vehicle cannot "
-                "receive enquiries yet"
-            ),
+            detail="This vehicle cannot receive enquiries yet",
         )
 
     if vehicle.owner_id == user.id:
         raise HTTPException(
             status_code=400,
-            detail=(
-                "You cannot message "
-                "your own vehicle listing"
-            ),
+            detail="You cannot message your own listing",
         )
 
     try:
-        enforce_rate_limit(
-            db,
-            user.id,
-        )
+        enforce_rate_limit(db, user.id)
 
-        # Reuse an existing conversation
-        # rather than creating duplicates.
         conversation_id = db.execute(
             text("""
-                SELECT id
-
-                FROM conversations
-
-                WHERE vehicle_id = :vehicle_id
-                  AND buyer_id = :buyer_id
+                INSERT INTO conversations (
+                    vehicle_id,
+                    buyer_id,
+                    seller_id
+                )
+                VALUES (
+                    :vehicle_id,
+                    :buyer_id,
+                    :seller_id
+                )
+                ON CONFLICT (vehicle_id, buyer_id)
+                DO UPDATE SET
+                    updated_at = conversations.updated_at
+                RETURNING id
             """),
             {
                 "vehicle_id": vehicle.id,
                 "buyer_id": user.id,
+                "seller_id": vehicle.owner_id,
             },
-        ).scalar_one_or_none()
+        ).scalar_one()
 
-        if conversation_id is None:
-            conversation_id = db.execute(
-                text("""
-                    INSERT INTO conversations (
-                        vehicle_id,
-                        buyer_id,
-                        seller_id
-                    )
-
-                    VALUES (
-                        :vehicle_id,
-                        :buyer_id,
-                        :seller_id
-                    )
-
-                    ON CONFLICT (
-                        vehicle_id,
-                        buyer_id
-                    )
-
-                    DO UPDATE SET
-                        updated_at =
-                            conversations.updated_at
-
-                    RETURNING id
-                """),
-                {
-                    "vehicle_id": vehicle.id,
-                    "buyer_id": user.id,
-                    "seller_id": vehicle.owner_id,
-                },
-            ).scalar_one()
-
-        # Confirm participants before writing.
-        require_participant(
-            conversation_id,
-            user,
-            db,
-        )
+        require_participant(conversation_id, user, db)
 
         message = write_message(
             db,
@@ -426,15 +287,10 @@ def start_conversation(
             "conversation_id": conversation_id,
             "message": message,
         }
-
     except Exception:
         db.rollback()
         raise
 
-
-# ----------------------------------------
-# GET INBOX
-# ----------------------------------------
 
 @router.get("/conversations")
 def list_conversations(
@@ -451,36 +307,27 @@ def list_conversations(
                 c.created_at,
                 c.updated_at,
 
+                buyer.full_name AS buyer_name,
+                seller.full_name AS seller_name,
+
                 v.make,
                 v.model,
                 v.year,
 
                 (
                     SELECT COUNT(*)
-
                     FROM messages m
-
-                    WHERE
-                        m.conversation_id = c.id
-
-                    AND m.sender_id <> :user_id
-
-                    AND m.read_at IS NULL
-
+                    WHERE m.conversation_id = c.id
+                      AND m.sender_id <> :user_id
+                      AND m.read_at IS NULL
                 ) AS unread_count,
 
                 (
                     SELECT m.body
-
                     FROM messages m
-
-                    WHERE
-                        m.conversation_id = c.id
-
+                    WHERE m.conversation_id = c.id
                     ORDER BY m.id DESC
-
                     LIMIT 1
-
                 ) AS last_message
 
             FROM conversations c
@@ -488,52 +335,34 @@ def list_conversations(
             JOIN vehicles v
                 ON v.id = c.vehicle_id
 
-            WHERE
-                c.buyer_id = :user_id
-                OR c.seller_id = :user_id
+            JOIN users buyer
+                ON buyer.id = c.buyer_id
 
-            ORDER BY
-                c.updated_at DESC,
-                c.id DESC
+            JOIN users seller
+                ON seller.id = c.seller_id
 
+            WHERE c.buyer_id = :user_id
+               OR c.seller_id = :user_id
+
+            ORDER BY c.updated_at DESC, c.id DESC
             LIMIT 100
         """),
-        {
-            "user_id": user.id,
-        },
+        {"user_id": user.id},
     ).mappings().all()
 
     return {
-        "data": [
-            dict(row)
-            for row in rows
-        ],
+        "data": [dict(row) for row in rows],
         "total_returned": len(rows),
     }
 
 
-# ----------------------------------------
-# GET CONVERSATION MESSAGES
-# ----------------------------------------
-
-@router.get(
-    "/conversations/{conversation_id}"
-)
+@router.get("/conversations/{conversation_id}")
 def conversation_messages(
     conversation_id: int,
     before_id: int | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """
-    Returns up to 50 messages.
-
-    Optional before_id enables pagination.
-
-    The query is constructed with only
-    fixed SQL fragments and bound values.
-    """
-
     conversation = require_participant(
         conversation_id,
         user,
@@ -554,9 +383,7 @@ def conversation_messages(
             body,
             created_at,
             read_at
-
         FROM messages
-
         WHERE conversation_id = :conversation_id
     """
 
@@ -565,16 +392,12 @@ def conversation_messages(
     }
 
     if before_id is not None:
-        query += """
-            AND id < :before_id
-        """
-
+        query += " AND id < :before_id"
         parameters["before_id"] = before_id
 
     query += """
         ORDER BY id DESC
-
-        LIMIT 50
+        LIMIT 51
     """
 
     rows = db.execute(
@@ -582,21 +405,15 @@ def conversation_messages(
         parameters,
     ).mappings().all()
 
-    messages = [
-        dict(row)
-        for row in reversed(rows)
-    ]
+    has_more = len(rows) > 50
+    messages = [dict(row) for row in reversed(rows[:50])]
 
     return {
         "conversation": conversation,
         "messages": messages,
-        "has_more": len(messages) == 50,
+        "has_more": has_more,
     }
 
-
-# ----------------------------------------
-# SEND MESSAGE
-# ----------------------------------------
 
 @router.post(
     "/conversations/{conversation_id}/messages",
@@ -610,18 +427,10 @@ def send_message(
     user: User = Depends(get_current_user),
 ):
     protect_write(request)
-
-    require_participant(
-        conversation_id,
-        user,
-        db,
-    )
+    require_participant(conversation_id, user, db)
 
     try:
-        enforce_rate_limit(
-            db,
-            user.id,
-        )
+        enforce_rate_limit(db, user.id)
 
         message = write_message(
             db,
@@ -631,21 +440,13 @@ def send_message(
         )
 
         db.commit()
-
         return message
-
     except Exception:
         db.rollback()
         raise
 
 
-# ----------------------------------------
-# MARK MESSAGES AS READ
-# ----------------------------------------
-
-@router.post(
-    "/conversations/{conversation_id}/read"
-)
+@router.post("/conversations/{conversation_id}/read")
 def mark_read(
     conversation_id: int,
     request: Request,
@@ -653,26 +454,16 @@ def mark_read(
     user: User = Depends(get_current_user),
 ):
     protect_write(request)
-
-    require_participant(
-        conversation_id,
-        user,
-        db,
-    )
+    require_participant(conversation_id, user, db)
 
     try:
         result = db.execute(
             text("""
                 UPDATE messages
-
                 SET read_at = NOW()
-
-                WHERE
-                    conversation_id = :conversation_id
-
-                AND sender_id <> :user_id
-
-                AND read_at IS NULL
+                WHERE conversation_id = :conversation_id
+                  AND sender_id <> :user_id
+                  AND read_at IS NULL
             """),
             {
                 "conversation_id": conversation_id,
@@ -681,14 +472,12 @@ def mark_read(
         )
 
         updated_count = result.rowcount
-
         db.commit()
 
         return {
             "ok": True,
             "marked_read": updated_count,
         }
-
     except Exception:
         db.rollback()
         raise
