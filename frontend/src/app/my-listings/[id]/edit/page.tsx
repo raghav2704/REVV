@@ -9,6 +9,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import VehiclePhotoUploader from "@/components/VehiclePhotoUploader";
 
 const API = "http://127.0.0.1:8000";
 
@@ -27,17 +28,16 @@ type Account = {
   id: number;
   role: string;
   full_name?: string;
-  email?: string;
 };
 
-type Photo = {
+type VehiclePhoto = {
   id: number;
   url: string;
   is_cover: boolean;
   position: number;
 };
 
-type FormValues = {
+type VehicleForm = {
   make: string;
   model: string;
   year: string;
@@ -46,9 +46,10 @@ type FormValues = {
   location: string;
 };
 
-type ApiEnvelope<T> = T | { data: T };
+const inputClass =
+  "mt-2 w-full rounded-xl border border-white/10 bg-[#0b1424] px-4 py-3 text-sm text-white outline-none focus:border-blue-500";
 
-function unwrap<T>(value: ApiEnvelope<T>): T {
+function unwrap<T>(value: T | { data: T }): T {
   if (
     value !== null &&
     typeof value === "object" &&
@@ -63,17 +64,15 @@ function unwrap<T>(value: ApiEnvelope<T>): T {
 
 async function checkResponse(response: Response) {
   if (response.status === 401) {
-    throw new Error("Please log in again.");
+    throw new Error("Your session has expired. Please log in again.");
   }
 
   if (response.status === 403) {
-    throw new Error(
-      "Access denied. You do not have permission to edit this vehicle."
-    );
+    throw new Error("You do not have permission to manage this vehicle.");
   }
 
   if (response.status === 404) {
-    throw new Error("This vehicle could not be found.");
+    throw new Error("Vehicle not found.");
   }
 
   if (!response.ok) {
@@ -87,16 +86,11 @@ async function checkResponse(response: Response) {
   }
 }
 
-function formatPrice(value: number) {
-  return new Intl.NumberFormat("en-NZ", {
-    style: "currency",
-    currency: "NZD",
-    maximumFractionDigits: 0,
-  }).format(value);
+function sortPhotos(images: VehiclePhoto[]) {
+  return [...images].sort(
+    (a, b) => a.position - b.position || a.id - b.id
+  );
 }
-
-const inputClass =
-  "mt-2 w-full rounded-xl border border-white/10 bg-[#111c2d] px-4 py-3 text-white outline-none focus:border-blue-500";
 
 export default function EditVehiclePage() {
   const params = useParams<{ id: string }>();
@@ -104,10 +98,10 @@ export default function EditVehiclePage() {
 
   const [account, setAccount] = useState<Account | null>(null);
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
-  const [form, setForm] = useState<FormValues | null>(null);
-  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [form, setForm] = useState<VehicleForm | null>(null);
+
+  const [photos, setPhotos] = useState<VehiclePhoto[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [fileInputKey, setFileInputKey] = useState(0);
 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -131,20 +125,17 @@ export default function EditVehiclePage() {
 
     await checkResponse(response);
 
-    const result: ApiEnvelope<{ images: Photo[] }> =
-      await response.json();
+    const result: { images: VehiclePhoto[] } | {
+      data: { images: VehiclePhoto[] };
+    } = await response.json();
 
     const gallery = unwrap(result);
 
-    const images = Array.isArray(gallery.images)
-      ? gallery.images
-      : [];
+    if (!Array.isArray(gallery.images)) {
+      throw new Error("Unexpected vehicle photo response.");
+    }
 
-    setPhotos(
-      [...images].sort(
-        (a, b) => a.position - b.position || a.id - b.id
-      )
-    );
+    setPhotos(sortPhotos(gallery.images));
   }, [id]);
 
   useEffect(() => {
@@ -155,7 +146,7 @@ export default function EditVehiclePage() {
       setError("");
 
       try {
-        const [accountResponse, vehicleResponse, photoResponse] =
+        const [accountResponse, vehicleResponse, photosResponse] =
           await Promise.all([
             fetch(`${API}/api/v1/auth/me`, {
               credentials: "include",
@@ -171,20 +162,19 @@ export default function EditVehiclePage() {
 
         await checkResponse(accountResponse);
         await checkResponse(vehicleResponse);
-        await checkResponse(photoResponse);
+        await checkResponse(photosResponse);
 
-        const accountResult: ApiEnvelope<Account> =
-          await accountResponse.json();
+        const currentAccount = unwrap<Account>(
+          await accountResponse.json()
+        );
 
-        const vehicleResult: ApiEnvelope<Vehicle> =
-          await vehicleResponse.json();
+        const currentVehicle = unwrap<Vehicle>(
+          await vehicleResponse.json()
+        );
 
-        const galleryResult: ApiEnvelope<{ images: Photo[] }> =
-          await photoResponse.json();
-
-        const currentAccount = unwrap(accountResult);
-        const currentVehicle = unwrap(vehicleResult);
-        const gallery = unwrap(galleryResult);
+        const gallery = unwrap<{ images: VehiclePhoto[] }>(
+          await photosResponse.json()
+        );
 
         if (
           !currentAccount ||
@@ -192,7 +182,7 @@ export default function EditVehiclePage() {
           !currentVehicle ||
           !Number.isInteger(currentVehicle.id)
         ) {
-          throw new Error("Invalid account or vehicle response.");
+          throw new Error("Invalid account or vehicle data.");
         }
 
         if (
@@ -200,8 +190,12 @@ export default function EditVehiclePage() {
           currentVehicle.owner_id !== currentAccount.id
         ) {
           throw new Error(
-            "You do not have permission to edit this listing."
+            "You are not authorised to edit this listing."
           );
+        }
+
+        if (!Array.isArray(gallery.images)) {
+          throw new Error("Invalid vehicle photo data.");
         }
 
         if (!active) return;
@@ -218,25 +212,17 @@ export default function EditVehiclePage() {
           location: currentVehicle.location,
         });
 
-        setPhotos(
-          [...(Array.isArray(gallery.images) ? gallery.images : [])]
-            .sort(
-              (a, b) =>
-                a.position - b.position || a.id - b.id
-            )
-        );
+        setPhotos(sortPhotos(gallery.images));
       } catch (err) {
         if (active) {
           setError(
             err instanceof Error
               ? err.message
-              : "Unable to load this listing."
+              : "Unable to load the vehicle."
           );
         }
       } finally {
-        if (active) {
-          setLoading(false);
-        }
+        if (active) setLoading(false);
       }
     }
 
@@ -248,7 +234,7 @@ export default function EditVehiclePage() {
   }, [id]);
 
   function updateField(
-    field: keyof FormValues,
+    field: keyof VehicleForm,
     value: string
   ) {
     setForm((current) =>
@@ -290,6 +276,15 @@ export default function EditVehiclePage() {
     setSuccess("");
 
     try {
+      const payload = {
+        make: form.make.trim(),
+        model: form.model.trim(),
+        year,
+        price_nzd: price,
+        mileage_km: mileage,
+        location: form.location.trim(),
+      };
+
       const response = await fetch(
         `${API}/api/v1/cars/${id}`,
         {
@@ -298,31 +293,14 @@ export default function EditVehiclePage() {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            make: form.make.trim(),
-            model: form.model.trim(),
-            year,
-            price_nzd: price,
-            mileage_km: mileage,
-            location: form.location.trim(),
-          }),
+          body: JSON.stringify(payload),
         }
       );
 
       await checkResponse(response);
 
       setVehicle((current) =>
-        current
-          ? {
-              ...current,
-              make: form.make.trim(),
-              model: form.model.trim(),
-              year,
-              price_nzd: price,
-              mileage_km: mileage,
-              location: form.location.trim(),
-            }
-          : null
+        current ? { ...current, ...payload } : null
       );
 
       setSuccess("Vehicle details saved successfully.");
@@ -339,22 +317,18 @@ export default function EditVehiclePage() {
     if (!canEdit || busy || selectedFiles.length === 0) return;
 
     if (photos.length + selectedFiles.length > 10) {
-      setError("A vehicle can have a maximum of 10 photos.");
+      setError("Maximum 10 photos per vehicle.");
       return;
     }
 
     if (
       selectedFiles.some(
         (file) =>
-          !["image/jpeg", "image/png", "image/webp"].includes(
-            file.type
-          ) ||
+          !["image/jpeg", "image/png", "image/webp"].includes(file.type) ||
           file.size > 5 * 1024 * 1024
       )
     ) {
-      setError(
-        "Use JPG, PNG or WEBP files, maximum 5 MB each."
-      );
+      setError("Only JPG, PNG or WEBP images up to 5 MB are allowed.");
       return;
     }
 
@@ -379,22 +353,22 @@ export default function EditVehiclePage() {
       );
 
       await checkResponse(response);
-      await loadPhotos();
-
       setSelectedFiles([]);
-      setFileInputKey((current) => current + 1);
+      await loadPhotos();
 
       setSuccess("Photos uploaded successfully.");
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Upload failed."
+        err instanceof Error
+          ? err.message
+          : "Unable to upload photos."
       );
     } finally {
       setBusy(false);
     }
   }
 
-  async function deletePhoto(photo: Photo) {
+  async function deletePhoto(photo: VehiclePhoto) {
     if (
       !canEdit ||
       busy ||
@@ -418,7 +392,6 @@ export default function EditVehiclePage() {
 
       await checkResponse(response);
       await loadPhotos();
-
       setSuccess("Photo deleted.");
     } catch (err) {
       setError(
@@ -429,7 +402,7 @@ export default function EditVehiclePage() {
     }
   }
 
-  async function setCover(photo: Photo) {
+  async function setCover(photo: VehiclePhoto) {
     if (!canEdit || busy || photo.is_cover) return;
 
     setBusy(true);
@@ -447,38 +420,34 @@ export default function EditVehiclePage() {
 
       await checkResponse(response);
       await loadPhotos();
-
       setSuccess("Cover photo updated.");
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Unable to change cover photo."
+          : "Unable to update cover photo."
       );
     } finally {
       setBusy(false);
     }
   }
 
-  async function movePhoto(
-    index: number,
-    direction: -1 | 1
-  ) {
-    const nextIndex = index + direction;
+  async function movePhoto(index: number, direction: -1 | 1) {
+    const target = index + direction;
 
     if (
       !canEdit ||
       busy ||
-      nextIndex < 0 ||
-      nextIndex >= photos.length
+      target < 0 ||
+      target >= photos.length
     ) {
       return;
     }
 
     const ordered = [...photos];
 
-    [ordered[index], ordered[nextIndex]] = [
-      ordered[nextIndex],
+    [ordered[index], ordered[target]] = [
+      ordered[target],
       ordered[index],
     ];
 
@@ -503,7 +472,6 @@ export default function EditVehiclePage() {
 
       await checkResponse(response);
       await loadPhotos();
-
       setSuccess("Photo order saved.");
     } catch (err) {
       setError(
@@ -518,20 +486,20 @@ export default function EditVehiclePage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#080e18] p-12 text-white">
+      <main className="min-h-screen bg-[#080f1c] px-6 py-20 text-center text-white">
         Loading vehicle details...
       </main>
     );
   }
 
-  if (!form || !canEdit) {
+  if (!form || !canEdit || !vehicle) {
     return (
-      <main className="min-h-screen bg-[#080e18] px-6 py-20 text-center text-white">
+      <main className="min-h-screen bg-[#080f1c] px-6 py-20 text-center text-white">
         <h1 className="text-3xl font-bold">
           Unable to Edit Vehicle
         </h1>
 
-        <p className="mt-4 text-red-300">
+        <p role="alert" className="mt-4 text-red-300">
           {error || "You do not have access to this listing."}
         </p>
 
@@ -546,44 +514,37 @@ export default function EditVehiclePage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#080e18] px-5 py-14 text-white">
+    <main className="min-h-screen bg-[#080f1c] px-5 py-12 text-white sm:px-8">
       <div className="mx-auto max-w-5xl">
         <Link
           href={backLink}
-          className="text-sm font-semibold text-blue-400"
+          className="text-sm font-medium text-blue-400 hover:text-blue-300"
         >
-          ← Back to {isAdmin ? "Admin Dashboard" : "My Listings"}
+          ← Back to {isAdmin ? "Admin Dashboard" : "Your Garage"}
         </Link>
 
-        <div className="mt-8">
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-blue-400">
+        <header className="mt-8">
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-400">
             REVV / VEHICLE MANAGEMENT
           </p>
 
           <div className="mt-3 flex flex-wrap items-center gap-4">
-            <h1 className="text-4xl font-black">
+            <h1 className="text-4xl font-black tracking-tight">
               Edit Vehicle
             </h1>
 
             {isAdmin && (
-              <span className="rounded-lg border border-blue-500/30 bg-blue-600/15 px-3 py-1 text-xs font-bold uppercase text-blue-300">
+              <span className="rounded-lg border border-blue-500/30 bg-blue-600/15 px-3 py-1 text-xs font-semibold text-blue-300">
                 Admin Access
               </span>
             )}
           </div>
 
-          <p className="mt-3 text-zinc-400">
+          <p className="mt-3 text-slate-400">
             Listing #{id} — {vehicle.year} {vehicle.make}{" "}
             {vehicle.model}
           </p>
-
-          {isAdmin && vehicle.owner_id === null && (
-            <p className="mt-2 text-sm text-blue-300">
-              This is an unassigned legacy listing. Admin access
-              allows you to manage it.
-            </p>
-          )}
-        </div>
+        </header>
 
         {error && (
           <div
@@ -605,16 +566,16 @@ export default function EditVehiclePage() {
 
         <form
           onSubmit={saveVehicle}
-          className="mt-8 rounded-2xl border border-white/10 bg-[#101a2a] p-7"
+          className="mt-8 rounded-2xl border border-white/10 bg-[#111c2e] p-6 sm:p-8"
         >
-          <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
             <h2 className="text-2xl font-bold">
               Vehicle Details
             </h2>
 
-            <span className="text-sm text-zinc-400">
-              Current price: {formatPrice(vehicle.price_nzd)}
-            </span>
+            <p className="mt-2 text-sm text-slate-400">
+              Update your vehicle's information and asking price.
+            </p>
           </div>
 
           <div className="mt-7 grid gap-5 sm:grid-cols-2">
@@ -623,46 +584,42 @@ export default function EditVehiclePage() {
                 ["make", "Make"],
                 ["model", "Model"],
                 ["year", "Year"],
-                ["price_nzd", "Price (NZD)"],
+                ["price_nzd", "Asking Price (NZD)"],
                 ["mileage_km", "Mileage (km)"],
                 ["location", "Location"],
               ] as const
-            ).map(([key, label]) => (
+            ).map(([field, label]) => (
               <label
-                key={key}
-                className="text-sm font-medium text-zinc-300"
+                key={field}
+                className="text-sm font-medium text-slate-300"
               >
                 {label}
 
                 <input
                   required
                   type={
-                    ["year", "price_nzd", "mileage_km"].includes(
-                      key
-                    )
+                    ["year", "price_nzd", "mileage_km"].includes(field)
                       ? "number"
                       : "text"
                   }
                   min={
-                    key === "year"
+                    field === "year"
                       ? 1900
-                      : key === "price_nzd"
+                      : field === "price_nzd"
                         ? 1
-                        : key === "mileage_km"
+                        : field === "mileage_km"
                           ? 0
                           : undefined
                   }
-                  max={key === "year" ? 2100 : undefined}
+                  max={field === "year" ? 2100 : undefined}
                   step={
-                    ["year", "price_nzd", "mileage_km"].includes(
-                      key
-                    )
+                    ["year", "price_nzd", "mileage_km"].includes(field)
                       ? 1
                       : undefined
                   }
-                  value={form[key]}
+                  value={form[field]}
                   onChange={(event) =>
-                    updateField(key, event.target.value)
+                    updateField(field, event.target.value)
                   }
                   className={inputClass}
                 />
@@ -673,13 +630,13 @@ export default function EditVehiclePage() {
           <button
             type="submit"
             disabled={busy}
-            className="mt-7 rounded-xl bg-blue-600 px-7 py-3 font-bold hover:bg-blue-500 disabled:opacity-50"
+            className="mt-7 rounded-xl bg-blue-600 px-7 py-3 text-sm font-bold hover:bg-blue-500 disabled:opacity-50"
           >
             {busy ? "Saving..." : "Save Vehicle Details"}
           </button>
         </form>
 
-        <section className="mt-8 rounded-2xl border border-white/10 bg-[#101a2a] p-7">
+        <section className="mt-8 rounded-2xl border border-white/10 bg-[#111c2e] p-6 sm:p-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-400">
@@ -690,146 +647,142 @@ export default function EditVehiclePage() {
                 Manage Vehicle Photos
               </h2>
 
-              <p className="mt-2 text-sm text-zinc-400">
-                Upload, reorder, delete and choose a cover photo.
+              <p className="mt-2 text-sm text-slate-400">
+                Add photos, select a cover and arrange your gallery.
               </p>
             </div>
 
-            <span className="rounded-xl bg-blue-600/15 px-4 py-2 font-semibold text-blue-300">
-              {photos.length} / 10 Photos
+            <span className="rounded-xl bg-blue-600/15 px-4 py-2 text-sm font-semibold text-blue-300">
+              {photos.length} / 10 Uploaded
             </span>
           </div>
 
-          <div className="mt-7 rounded-xl border border-dashed border-white/20 bg-[#0c1523] p-6">
-            <h3 className="font-bold">Upload Photos</h3>
-
-            <p className="mt-2 text-sm text-zinc-400">
-              JPG, PNG or WEBP. Maximum 5 MB per image,
-              up to 10 images per vehicle.
-            </p>
-
-            <input
-              key={fileInputKey}
-              type="file"
-              multiple
-              accept="image/jpeg,image/png,image/webp"
-              disabled={busy || photos.length >= 10}
-              onChange={(event) =>
-                setSelectedFiles(
-                  Array.from(event.target.files ?? [])
-                )
-              }
-              className="mt-5 block w-full text-sm text-zinc-300 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:font-semibold file:text-white"
+          <div className="mt-7">
+            <VehiclePhotoUploader
+              files={selectedFiles}
+              onChange={setSelectedFiles}
+              remainingSlots={10 - photos.length}
+              disabled={busy}
             />
 
             {selectedFiles.length > 0 && (
-              <p className="mt-3 text-sm text-zinc-400">
-                {selectedFiles.length} photo(s) selected
-              </p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void uploadPhotos()}
+                className="mt-5 rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold hover:bg-blue-500 disabled:opacity-50"
+              >
+                {busy
+                  ? "Uploading..."
+                  : `Upload ${selectedFiles.length} Photo${selectedFiles.length === 1 ? "" : "s"}`}
+              </button>
             )}
-
-            <button
-              type="button"
-              disabled={busy || selectedFiles.length === 0}
-              onClick={() => void uploadPhotos()}
-              className="mt-5 rounded-xl bg-blue-600 px-6 py-3 font-bold hover:bg-blue-500 disabled:opacity-50"
-            >
-              {busy ? "Processing..." : "Upload Photos"}
-            </button>
           </div>
 
-          {photos.length === 0 ? (
-            <div className="mt-8 rounded-xl border border-white/10 p-10 text-center text-zinc-400">
-              No photos uploaded for this vehicle yet.
+          <div className="mt-10 border-t border-white/10 pt-8">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-xl font-bold">
+                Uploaded Photos
+              </h3>
+
+              <p className="text-sm text-slate-400">
+                {photos.length} images
+              </p>
             </div>
-          ) : (
-            <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {photos.map((photo, index) => (
-                <article
-                  key={photo.id}
-                  className="overflow-hidden rounded-xl border border-white/10 bg-[#111c2d]"
-                >
-                  <div className="relative h-48 bg-[#172438]">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={new URL(photo.url, API).toString()}
-                      alt={`Vehicle photo ${index + 1}`}
-                      className="h-full w-full object-cover"
-                    />
 
-                    {photo.is_cover && (
-                      <span className="absolute left-3 top-3 rounded-lg bg-blue-600 px-3 py-1 text-xs font-bold">
-                        Cover Photo
-                      </span>
-                    )}
-                  </div>
+            {photos.length === 0 ? (
+              <div className="mt-5 rounded-xl border border-white/10 bg-[#0b1424] p-10 text-center text-sm text-slate-400">
+                No photos uploaded yet.
+              </div>
+            ) : (
+              <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                {photos.map((photo, index) => (
+                  <article
+                    key={photo.id}
+                    className="overflow-hidden rounded-xl border border-white/10 bg-[#0b1424]"
+                  >
+                    <div className="relative h-44 overflow-hidden bg-[#172438]">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={new URL(photo.url, API).toString()}
+                        alt={`Uploaded vehicle photo ${index + 1}`}
+                        className="h-full w-full object-cover"
+                      />
 
-                  <div className="space-y-3 p-4">
-                    <p className="text-sm text-zinc-400">
-                      Photo {index + 1}
-                    </p>
-
-                    <button
-                      type="button"
-                      disabled={busy || photo.is_cover}
-                      onClick={() => void setCover(photo)}
-                      className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold disabled:opacity-40"
-                    >
-                      {photo.is_cover
-                        ? "Current Cover"
-                        : "Set as Cover"}
-                    </button>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        disabled={busy || index === 0}
-                        onClick={() => void movePhoto(index, -1)}
-                        className="rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-40"
-                      >
-                        ← Left
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={
-                          busy || index === photos.length - 1
-                        }
-                        onClick={() => void movePhoto(index, 1)}
-                        className="rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-40"
-                      >
-                        Right →
-                      </button>
+                      {photo.is_cover && (
+                        <span className="absolute left-3 top-3 rounded-lg bg-blue-600 px-3 py-1 text-xs font-semibold">
+                          Cover Photo
+                        </span>
+                      )}
                     </div>
 
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void deletePhoto(photo)}
-                      className="w-full rounded-lg border border-red-500/30 px-4 py-2 text-sm font-semibold text-red-300 hover:bg-red-500/10 disabled:opacity-40"
-                    >
-                      Delete Photo
-                    </button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
+                    <div className="space-y-3 p-4">
+                      <p className="text-xs text-slate-400">
+                        Photo {index + 1}
+                      </p>
+
+                      <button
+                        type="button"
+                        disabled={busy || photo.is_cover}
+                        onClick={() => void setCover(photo)}
+                        className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold disabled:opacity-40"
+                      >
+                        {photo.is_cover
+                          ? "Current Cover"
+                          : "Set as Cover"}
+                      </button>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          disabled={busy || index === 0}
+                          onClick={() => void movePhoto(index, -1)}
+                          className="rounded-lg border border-white/15 px-3 py-2 text-sm disabled:opacity-30"
+                        >
+                          ← Left
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={
+                            busy || index === photos.length - 1
+                          }
+                          onClick={() => void movePhoto(index, 1)}
+                          className="rounded-lg border border-white/15 px-3 py-2 text-sm disabled:opacity-30"
+                        >
+                          Right →
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void deletePhoto(photo)}
+                        className="w-full rounded-lg border border-red-500/30 px-4 py-2.5 text-sm font-semibold text-red-300 hover:bg-red-500/10 disabled:opacity-40"
+                      >
+                        Delete Photo
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
         </section>
 
-        <div className="mt-8 flex flex-wrap gap-4">
+        <div className="mt-8 flex flex-wrap gap-3">
           <Link
             href={`/cars/${id}`}
-            className="rounded-xl bg-blue-600 px-6 py-3 font-semibold hover:bg-blue-500"
+            className="rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold hover:bg-blue-500"
           >
             View Public Listing
           </Link>
 
           <Link
             href={backLink}
-            className="rounded-xl border border-white/20 px-6 py-3 font-semibold hover:bg-white/10"
+            className="rounded-xl border border-white/15 px-6 py-3 text-sm font-semibold hover:bg-white/10"
           >
-            {isAdmin ? "Admin Dashboard" : "My Listings"}
+            {isAdmin ? "Admin Dashboard" : "Your Garage"}
           </Link>
         </div>
       </div>
