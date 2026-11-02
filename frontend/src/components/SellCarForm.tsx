@@ -2,214 +2,384 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import {
+  type FormEvent,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import VehiclePhotoUploader from "@/components/VehiclePhotoUploader";
 
 const API = "http://127.0.0.1:8000";
 
-type VehicleForm = {
+type Make = {
+  id: number;
+  name: string;
+};
+
+type Model = {
+  id: number;
+  make_id: number;
+  name: string;
+};
+
+type FormValues = {
   make: string;
   model: string;
   year: string;
-  price_nzd: string;
   mileage_km: string;
+  price_nzd: string;
   location: string;
 };
 
-type CreatedVehicle = {
-  id: number;
-};
-
-const initialForm: VehicleForm = {
+const initialValues: FormValues = {
   make: "",
   model: "",
   year: "",
-  price_nzd: "",
   mileage_km: "",
+  price_nzd: "",
   location: "",
 };
 
 const inputClass =
-  "mt-2 w-full rounded-xl border border-white/10 bg-[#0b1424] px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-blue-500";
+  "w-full min-h-12 rounded-xl border border-[#30415D] bg-[#111E32] px-4 py-3 text-sm text-white placeholder:text-slate-400 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50";
 
-async function checkResponse(response: Response) {
-  if (response.status === 401) {
-    throw new Error(
-      "Your session has expired. Please log in again."
-    );
+const labelClass =
+  "mb-2 block text-sm font-semibold text-slate-200";
+
+const sectionClass =
+  "overflow-hidden rounded-3xl border border-white/10 bg-[#0E1A2C] shadow-xl";
+
+function getError(data: unknown, fallback: string): string {
+  if (!data || typeof data !== "object") return fallback;
+
+  const record = data as Record<string, unknown>;
+
+  if (typeof record.detail === "string") {
+    return record.detail;
   }
 
-  if (response.status === 403) {
-    throw new Error(
-      "You do not have permission to perform this action."
-    );
+  if (Array.isArray(record.detail)) {
+    return record.detail
+      .map((item: unknown) => {
+        if (
+          item &&
+          typeof item === "object" &&
+          "msg" in item
+        ) {
+          return String(item.msg);
+        }
+        return "Invalid field";
+      })
+      .join(", ");
   }
 
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
+  return fallback;
+}
 
-    let message = `Request failed (${response.status}).`;
-
-    if (typeof body?.detail === "string") {
-      message = body.detail;
-    } else if (Array.isArray(body?.detail)) {
-      message = body.detail
-        .map((item: { msg?: string }) => item.msg ?? "Invalid value")
-        .join(". ");
-    }
-
-    throw new Error(message);
+async function readJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
   }
 }
 
-function getCreatedId(result: unknown): number {
-  if (!result || typeof result !== "object") {
-    throw new Error("Invalid vehicle creation response.");
+function extractId(data: unknown): number {
+  if (!data || typeof data !== "object") {
+    throw new Error(
+      "The server response was unexpected. Check Your Garage before retrying."
+    );
   }
 
-  const response = result as Record<string, unknown>;
+  const result = data as Record<string, unknown>;
+  const nested =
+    result.data &&
+    typeof result.data === "object" &&
+    !Array.isArray(result.data)
+      ? (result.data as Record<string, unknown>)
+      : null;
 
-  const raw =
-    "data" in response &&
-    response.data !== null &&
-    typeof response.data === "object"
-      ? response.data
-      : response;
+  const id = Number(nested?.id ?? result.id);
 
-  const vehicle = raw as Record<string, unknown>;
-  const id = Number(vehicle.id);
-
-  if (!Number.isSafeInteger(id) || id <= 0) {
+  if (!Number.isInteger(id) || id <= 0) {
     throw new Error(
-      "Vehicle creation response did not contain a valid ID. Check Your Garage before trying again."
+      "Could not confirm the listing ID. Check Your Garage before retrying."
     );
   }
 
   return id;
 }
 
+function SectionHeader({
+  number,
+  title,
+  description,
+}: {
+  number: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="border-b border-white/10 bg-[#132239] px-6 py-6 sm:px-9">
+      <div className="flex items-center gap-4">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-sm font-black text-white">
+          {number}
+        </div>
+
+        <div>
+          <h2 className="text-xl font-black tracking-tight text-white sm:text-2xl">
+            {title}
+          </h2>
+          <p className="mt-1 text-sm text-slate-400">
+            {description}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SellCarForm() {
-  const router = useRouter();
+  const [form, setForm] = useState<FormValues>(initialValues);
 
-  const [form, setForm] = useState<VehicleForm>(initialForm);
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [makes, setMakes] = useState<Make[]>([]);
+  const [models, setModels] = useState<Model[]>([]);
 
-  const [busy, setBusy] = useState(false);
+  const [makeSearch, setMakeSearch] = useState("");
+  const [modelSearch, setModelSearch] = useState("");
+
+  const [loadingMakes, setLoadingMakes] = useState(true);
+  const [loadingModels, setLoadingModels] = useState(false);
+
+  const [catalogueError, setCatalogueError] = useState("");
+  const [modelError, setModelError] = useState("");
+
+  const [manualMake, setManualMake] = useState(false);
+  const [manualModel, setManualModel] = useState(false);
+
+  const [files, setFiles] = useState<File[]>([]);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
-  // Keep the created ID so a failed photo upload can be retried
-  // without creating a second vehicle listing.
   const [createdId, setCreatedId] = useState<number | null>(
     null
   );
+  const [complete, setComplete] = useState(false);
+  const [uploadAttempted, setUploadAttempted] = useState(false);
+
+  const currentYear = new Date().getFullYear();
+
+  const selectedMakeId = useMemo(() => {
+    if (manualMake || !form.make.trim()) return null;
+
+    return (
+      makes.find(
+        (item) =>
+          item.name.toLowerCase() ===
+          form.make.trim().toLowerCase()
+      )?.id ?? null
+    );
+  }, [makes, form.make, manualMake]);
+
+  const filteredMakes = useMemo(
+    () =>
+      makes.filter((item) =>
+        item.name
+          .toLowerCase()
+          .includes(makeSearch.toLowerCase().trim())
+      ),
+    [makes, makeSearch]
+  );
+
+  const filteredModels = useMemo(
+    () =>
+      models.filter((item) =>
+        item.name
+          .toLowerCase()
+          .includes(modelSearch.toLowerCase().trim())
+      ),
+    [models, modelSearch]
+  );
+
+  // Load REVV manufacturers.
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadMakes() {
+      try {
+        const response = await fetch(
+          `${API}/api/v1/vehicle-makes`,
+          { signal: controller.signal }
+        );
+
+        if (!response.ok) {
+          throw new Error("Catalogue unavailable");
+        }
+
+        const data: unknown = await response.json();
+
+        if (!Array.isArray(data)) {
+          throw new Error("Invalid catalogue response");
+        }
+
+        if (!controller.signal.aborted) {
+          setMakes(data as Make[]);
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setCatalogueError(
+            "The catalogue couldn't be loaded. Enter your manufacturer manually."
+          );
+          setManualMake(true);
+          setManualModel(true);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoadingMakes(false);
+        }
+      }
+    }
+
+    void loadMakes();
+    return () => controller.abort();
+  }, []);
+
+  // Load models for the selected manufacturer.
+  useEffect(() => {
+    const controller = new AbortController();
+
+    if (selectedMakeId === null) {
+      setModels([]);
+      setModelError("");
+      setLoadingModels(false);
+      return () => controller.abort();
+    }
+
+    async function loadModels(makeId: number) {
+      setLoadingModels(true);
+      setModelError("");
+      setModels([]);
+
+      try {
+        const response = await fetch(
+          `${API}/api/v1/vehicle-makes/${makeId}/models`,
+          { signal: controller.signal }
+        );
+
+        if (!response.ok) {
+          throw new Error("Models unavailable");
+        }
+
+        const data: unknown = await response.json();
+
+        if (!Array.isArray(data)) {
+          throw new Error("Invalid model response");
+        }
+
+        if (!controller.signal.aborted) {
+          setModels(data as Model[]);
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setModelError(
+            "Models couldn't be loaded. Enter your model manually."
+          );
+          setManualModel(true);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoadingModels(false);
+        }
+      }
+    }
+
+    void loadModels(selectedMakeId);
+    return () => controller.abort();
+  }, [selectedMakeId]);
 
   function updateField(
-    field: keyof VehicleForm,
+    key: keyof FormValues,
     value: string
   ) {
     if (createdId !== null) return;
 
-    setForm((current) => ({
-      ...current,
-      [field]: value,
+    setForm((previous) => ({
+      ...previous,
+      [key]: value,
     }));
-
-    setError("");
   }
 
-  function validateForm() {
+  function selectMake(value: string) {
+    if (createdId !== null) return;
+
+    setForm((previous) => ({
+      ...previous,
+      make: value,
+      model: "",
+    }));
+
+    setModelSearch("");
+    setManualModel(false);
+  }
+
+  function validate(): string | null {
+    if (
+      !form.make.trim() ||
+      !form.model.trim() ||
+      !form.location.trim()
+    ) {
+      return "Please complete all required fields.";
+    }
+
+    if (
+      [form.make, form.model, form.location].some(
+        (value) => value.trim().length > 100
+      )
+    ) {
+      return "Vehicle details cannot exceed 100 characters.";
+    }
+
     const year = Number(form.year);
     const price = Number(form.price_nzd);
     const mileage = Number(form.mileage_km);
 
     if (
-      !form.make.trim() ||
-      !form.model.trim() ||
-      !form.location.trim() ||
       !form.year.trim() ||
-      !form.price_nzd.trim() ||
-      !form.mileage_km.trim()
+      !Number.isInteger(year) ||
+      year < 1886 ||
+      year > currentYear + 1
     ) {
-      throw new Error("Please complete all vehicle details.");
+      return "Enter a valid vehicle year.";
     }
 
     if (
-      !Number.isInteger(year) ||
-      year < 1900 ||
-      year > new Date().getFullYear() + 1
+      !form.price_nzd.trim() ||
+      !Number.isInteger(price) ||
+      price <= 0
     ) {
-      throw new Error("Please enter a valid vehicle year.");
+      return "Enter a valid asking price.";
     }
 
-    if (!Number.isSafeInteger(price) || price <= 0) {
-      throw new Error("Enter a valid asking price.");
+    if (
+      !form.mileage_km.trim() ||
+      !Number.isInteger(mileage) ||
+      mileage < 0
+    ) {
+      return "Enter valid vehicle mileage.";
     }
 
-    if (!Number.isSafeInteger(mileage) || mileage < 0) {
-      throw new Error("Enter a valid mileage.");
-    }
-
-    return {
-      make: form.make.trim(),
-      model: form.model.trim(),
-      year,
-      price_nzd: price,
-      mileage_km: mileage,
-      location: form.location.trim(),
-    };
-  }
-
-  async function createVehicle(): Promise<number> {
-    const payload = validateForm();
-
-    const response = await fetch(`${API}/api/v1/cars`, {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-
-    await checkResponse(response);
-
-    const result: unknown = await response.json();
-    return getCreatedId(result);
+    return null;
   }
 
   async function uploadPhotos(vehicleId: number) {
-    if (selectedFiles.length === 0) return;
-
-    if (selectedFiles.length > 10) {
-      throw new Error("You can upload a maximum of 10 photos.");
-    }
-
-    for (const file of selectedFiles) {
-      if (
-        !["image/jpeg", "image/png", "image/webp"].includes(
-          file.type
-        )
-      ) {
-        throw new Error(
-          `${file.name} is not a supported image format.`
-        );
-      }
-
-      if (file.size > 5 * 1024 * 1024) {
-        throw new Error(
-          `${file.name} is larger than the 5 MB limit.`
-        );
-      }
-    }
+    if (files.length === 0) return;
 
     const body = new FormData();
 
-    // The first photo is the initial cover image.
-    selectedFiles.forEach((file) => {
+    for (const file of files) {
       body.append("files", file);
-    });
+    }
 
     const response = await fetch(
       `${API}/api/v1/cars/${vehicleId}/images`,
@@ -220,7 +390,16 @@ export default function SellCarForm() {
       }
     );
 
-    await checkResponse(response);
+    if (!response.ok) {
+      const data = await readJson(response);
+
+      throw new Error(
+        getError(
+          data,
+          "The listing was created, but the photo upload failed."
+        )
+      );
+    }
   }
 
   async function handleSubmit(
@@ -228,278 +407,554 @@ export default function SellCarForm() {
   ) {
     event.preventDefault();
 
-    if (busy) return;
+    if (submitting || complete) return;
 
-    setBusy(true);
     setError("");
-    setSuccess("");
 
+    if (createdId === null) {
+      const validationError = validate();
+
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
+    }
+
+    setSubmitting(true);
     let vehicleId = createdId;
 
     try {
-      // Only create the vehicle once.
       if (vehicleId === null) {
-        vehicleId = await createVehicle();
+        const response = await fetch(
+          `${API}/api/v1/cars`,
+          {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              make: form.make.trim(),
+              model: form.model.trim(),
+              year: Number(form.year),
+              mileage_km: Number(form.mileage_km),
+              price_nzd: Number(form.price_nzd),
+              location: form.location.trim(),
+            }),
+          }
+        );
+
+        const data = await readJson(response);
+
+        if (!response.ok) {
+          throw new Error(
+            getError(
+              data,
+              response.status === 401
+                ? "Please sign in before listing a vehicle."
+                : "Couldn't create your listing."
+            )
+          );
+        }
+
+        vehicleId = extractId(data);
         setCreatedId(vehicleId);
       }
 
-      // Upload selected images to the newly created vehicle.
+      // Avoid blindly repeating an upload if a previous
+      // request may already have succeeded.
+      if (uploadAttempted) {
+        throw new Error(
+          "Photo upload was already attempted. Check your listing in Your Garage and manage its photos there."
+        );
+      }
+
+      setUploadAttempted(true);
       await uploadPhotos(vehicleId);
 
-      setSelectedFiles([]);
-      setSuccess("Your vehicle has been listed successfully!");
-
-      router.push("/my-listings");
-      router.refresh();
+      setComplete(true);
     } catch (err) {
-      const message =
+      setError(
         err instanceof Error
           ? err.message
-          : "Something went wrong.";
-
-      if (vehicleId !== null) {
-        setError(
-          `Vehicle #${vehicleId} has been created, but the process could not finish: ${message} You can retry without creating another listing, or manage it in Your Garage.`
-        );
-      } else {
-        setError(message);
-      }
+          : "Something went wrong. Please try again."
+      );
     } finally {
-      setBusy(false);
+      setSubmitting(false);
     }
+  }
+
+  if (complete && createdId !== null) {
+    return (
+      <div className="mx-auto max-w-2xl rounded-3xl border border-white/10 bg-[#0E1A2C] p-8 text-center text-white shadow-xl sm:p-12">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-blue-600/20 text-3xl font-bold text-blue-300">
+          ✓
+        </div>
+
+        <h2 className="mt-6 text-3xl font-black">
+          Vehicle listed successfully!
+        </h2>
+
+        <p className="mt-3 text-slate-300">
+          Your {form.year} {form.make} {form.model} has
+          been added to REVV.
+        </p>
+
+        <div className="mt-8 flex flex-wrap justify-center gap-3">
+          <Link
+            href={`/cars/${createdId}`}
+            className="rounded-xl bg-blue-600 px-6 py-3 font-bold text-white transition hover:bg-blue-500"
+          >
+            View listing
+          </Link>
+
+          <Link
+            href="/my-listings"
+            className="rounded-xl border border-white/15 bg-white/5 px-6 py-3 font-bold text-white transition hover:bg-white/10"
+          >
+            Your Garage
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   return (
     <form
       onSubmit={handleSubmit}
-      className="space-y-7 text-white"
+      className="mx-auto max-w-5xl space-y-7 text-white"
     >
-      {/* VEHICLE DETAILS */}
+      {/* HERO */}
 
-      <section className="rounded-2xl border border-white/10 bg-[#111c2e] p-6 sm:p-8">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-400">
-            STEP 01 / VEHICLE INFORMATION
-          </p>
+      <header className="relative overflow-hidden rounded-3xl border border-white/10 bg-[#0B1628] p-7 sm:p-10">
+        <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-blue-600/20 blur-3xl" />
 
-          <h2 className="mt-3 text-2xl font-bold">
-            Vehicle Details
-          </h2>
+        <div className="relative">
+          <span className="inline-flex rounded-full border border-blue-400/20 bg-blue-500/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.18em] text-blue-300">
+            REVV MARKETPLACE
+          </span>
 
-          <p className="mt-2 text-sm leading-6 text-slate-400">
-            Tell buyers about your vehicle. Accurate information
-            helps your listing stand out.
+          <h1 className="mt-5 text-3xl font-black tracking-tight sm:text-4xl">
+            Sell your vehicle.
+            <span className="mt-1 block text-blue-300">
+              The smarter way.
+            </span>
+          </h1>
+
+          <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-300">
+            List your vehicle with confidence. Add
+            accurate details, showcase your photos,
+            and reach buyers through REVV.
           </p>
         </div>
+      </header>
 
-        <div className="mt-7 grid gap-5 sm:grid-cols-2">
-          <label className="text-sm font-medium text-slate-300">
-            Make
-            <input
-              required
-              type="text"
-              maxLength={100}
-              placeholder="e.g. BMW"
-              value={form.make}
-              disabled={busy || createdId !== null}
-              onChange={(event) =>
-                updateField("make", event.target.value)
-              }
-              className={inputClass}
-            />
-          </label>
+      {/* VEHICLE DETAILS */}
 
-          <label className="text-sm font-medium text-slate-300">
-            Model
-            <input
-              required
-              type="text"
-              maxLength={100}
-              placeholder="e.g. 320i"
-              value={form.model}
-              disabled={busy || createdId !== null}
-              onChange={(event) =>
-                updateField("model", event.target.value)
-              }
-              className={inputClass}
-            />
-          </label>
+      <section className={sectionClass}>
+        <SectionHeader
+          number="01"
+          title="Vehicle details"
+          description="Tell us about the car you're selling."
+        />
 
-          <label className="text-sm font-medium text-slate-300">
-            Year
+        {catalogueError && (
+          <div
+            role="alert"
+            className="mx-6 mt-6 rounded-xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-200 sm:mx-9"
+          >
+            {catalogueError}
+          </div>
+        )}
+
+        <div className="grid gap-6 p-6 md:grid-cols-2 sm:p-9">
+          {/* MANUFACTURER */}
+
+          <div>
+            <label htmlFor="revv-make" className={labelClass}>
+              Manufacturer *
+            </label>
+
+            {manualMake ? (
+              <div className="space-y-2">
+                <input
+                  id="revv-make"
+                  required
+                  maxLength={100}
+                  disabled={createdId !== null}
+                  value={form.make}
+                  onChange={(event) =>
+                    selectMake(event.target.value)
+                  }
+                  placeholder="Enter manufacturer"
+                  className={inputClass}
+                />
+
+                {makes.length > 0 && (
+                  <button
+                    type="button"
+                    disabled={createdId !== null}
+                    onClick={() => {
+                      setManualMake(false);
+                      selectMake("");
+                    }}
+                    className="text-xs font-bold text-blue-300 hover:text-white"
+                  >
+                    Back to manufacturer list
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <input
+                  type="search"
+                  aria-label="Search manufacturers"
+                  placeholder="Search manufacturers..."
+                  value={makeSearch}
+                  disabled={createdId !== null}
+                  onChange={(event) =>
+                    setMakeSearch(event.target.value)
+                  }
+                  className={inputClass}
+                />
+
+                <select
+                  id="revv-make"
+                  required
+                  value={form.make}
+                  disabled={loadingMakes || createdId !== null}
+                  onChange={(event) => {
+                    if (event.target.value === "__manual") {
+                      setManualMake(true);
+                      selectMake("");
+                    } else {
+                      selectMake(event.target.value);
+                    }
+                  }}
+                  className={inputClass}
+                >
+                  <option value="">
+                    {loadingMakes
+                      ? "Loading manufacturers..."
+                      : "Select manufacturer"}
+                  </option>
+
+                  {filteredMakes
+                    .filter((item) => item.name !== "Other")
+                    .map((item) => (
+                      <option key={item.id} value={item.name}>
+                        {item.name}
+                      </option>
+                    ))}
+
+                  {form.make &&
+                    !filteredMakes.some(
+                      (item) => item.name === form.make
+                    ) && (
+                      <option value={form.make}>
+                        {form.make}
+                      </option>
+                    )}
+
+                  <option value="__manual">
+                    Other / Enter manually
+                  </option>
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* MODEL */}
+
+          <div>
+            <label htmlFor="revv-model" className={labelClass}>
+              Model *
+            </label>
+
+            {manualMake ||
+            manualModel ||
+            selectedMakeId === null ? (
+              <div className="space-y-2">
+                <input
+                  id="revv-model"
+                  required
+                  maxLength={100}
+                  value={form.model}
+                  disabled={
+                    !form.make.trim() ||
+                    createdId !== null
+                  }
+                  onChange={(event) =>
+                    updateField("model", event.target.value)
+                  }
+                  placeholder={
+                    form.make
+                      ? "Enter vehicle model"
+                      : "Select manufacturer first"
+                  }
+                  className={inputClass}
+                />
+
+                {!manualMake &&
+                  manualModel &&
+                  selectedMakeId !== null && (
+                    <button
+                      type="button"
+                      disabled={createdId !== null}
+                      onClick={() => {
+                        setManualModel(false);
+                        updateField("model", "");
+                      }}
+                      className="text-xs font-bold text-blue-300 hover:text-white"
+                    >
+                      Back to model list
+                    </button>
+                  )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <input
+                  type="search"
+                  aria-label="Search models"
+                  placeholder="Search vehicle models..."
+                  value={modelSearch}
+                  disabled={createdId !== null}
+                  onChange={(event) =>
+                    setModelSearch(event.target.value)
+                  }
+                  className={inputClass}
+                />
+
+                <select
+                  id="revv-model"
+                  required
+                  value={form.model}
+                  disabled={
+                    loadingModels || createdId !== null
+                  }
+                  onChange={(event) => {
+                    if (event.target.value === "__manual") {
+                      setManualModel(true);
+                      updateField("model", "");
+                    } else {
+                      updateField("model", event.target.value);
+                    }
+                  }}
+                  className={inputClass}
+                >
+                  <option value="">
+                    {loadingModels
+                      ? "Loading models..."
+                      : "Select model"}
+                  </option>
+
+                  {filteredModels.map((item) => (
+                    <option key={item.id} value={item.name}>
+                      {item.name}
+                    </option>
+                  ))}
+
+                  {form.model &&
+                    !filteredModels.some(
+                      (item) => item.name === form.model
+                    ) && (
+                      <option value={form.model}>
+                        {form.model}
+                      </option>
+                    )}
+
+                  <option value="__manual">
+                    Other / Enter manually
+                  </option>
+                </select>
+
+                {!loadingModels && models.length === 0 && (
+                  <p className="text-xs text-slate-400">
+                    No models listed? Choose Other and enter manually.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {modelError && (
+              <p role="alert" className="mt-2 text-xs text-amber-300">
+                {modelError}
+              </p>
+            )}
+          </div>
+
+          {/* YEAR */}
+
+          <div>
+            <label htmlFor="revv-year" className={labelClass}>
+              Year *
+            </label>
+
             <input
+              id="revv-year"
               required
               type="number"
-              min={1900}
-              max={new Date().getFullYear() + 1}
-              step={1}
-              placeholder="e.g. 2022"
+              min={1886}
+              max={currentYear + 1}
               value={form.year}
-              disabled={busy || createdId !== null}
+              disabled={createdId !== null}
               onChange={(event) =>
                 updateField("year", event.target.value)
               }
+              placeholder="e.g. 2022"
               className={inputClass}
             />
-          </label>
+          </div>
 
-          <label className="text-sm font-medium text-slate-300">
-            Asking Price (NZD)
-            <input
-              required
-              type="number"
-              min={1}
-              step={1}
-              placeholder="e.g. 35000"
-              value={form.price_nzd}
-              disabled={busy || createdId !== null}
-              onChange={(event) =>
-                updateField("price_nzd", event.target.value)
-              }
-              className={inputClass}
-            />
-          </label>
+          {/* MILEAGE */}
 
-          <label className="text-sm font-medium text-slate-300">
-            Mileage (km)
+          <div>
+            <label htmlFor="revv-mileage" className={labelClass}>
+              Mileage (km) *
+            </label>
+
             <input
+              id="revv-mileage"
               required
               type="number"
               min={0}
               step={1}
-              placeholder="e.g. 50000"
               value={form.mileage_km}
-              disabled={busy || createdId !== null}
+              disabled={createdId !== null}
               onChange={(event) =>
                 updateField("mileage_km", event.target.value)
               }
+              placeholder="e.g. 35000"
               className={inputClass}
             />
-          </label>
+          </div>
 
-          <label className="text-sm font-medium text-slate-300">
-            Location
+          {/* PRICE */}
+
+          <div>
+            <label htmlFor="revv-price" className={labelClass}>
+              Asking price (NZD) *
+            </label>
+
             <input
+              id="revv-price"
               required
-              type="text"
+              type="number"
+              min={1}
+              step={1}
+              value={form.price_nzd}
+              disabled={createdId !== null}
+              onChange={(event) =>
+                updateField("price_nzd", event.target.value)
+              }
+              placeholder="e.g. 34999"
+              className={inputClass}
+            />
+          </div>
+
+          {/* LOCATION */}
+
+          <div>
+            <label htmlFor="revv-location" className={labelClass}>
+              Location *
+            </label>
+
+            <input
+              id="revv-location"
+              required
               maxLength={100}
-              placeholder="e.g. Auckland"
               value={form.location}
-              disabled={busy || createdId !== null}
+              disabled={createdId !== null}
               onChange={(event) =>
                 updateField("location", event.target.value)
               }
+              placeholder="e.g. Auckland"
               className={inputClass}
             />
-          </label>
-        </div>
-
-        {createdId !== null && (
-          <div className="mt-6 rounded-xl border border-blue-500/20 bg-blue-500/10 p-4 text-sm text-blue-200">
-            Vehicle #{createdId} is saved. Its details are
-            locked here to avoid creating duplicate listings.
-            You can edit them in Your Garage.
           </div>
-        )}
+        </div>
       </section>
 
-      {/* VEHICLE PHOTOS */}
+      {/* PHOTO UPLOADER */}
 
-      <section className="rounded-2xl border border-white/10 bg-[#111c2e] p-6 sm:p-8">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-400">
-            STEP 02 / VEHICLE PHOTOS
-          </p>
+      <section className={sectionClass}>
+        <SectionHeader
+          number="02"
+          title="Vehicle photos"
+          description="Showcase your vehicle from every angle."
+        />
 
-          <h2 className="mt-3 text-2xl font-bold">
-            Upload Vehicle Photos
-          </h2>
-
-          <p className="mt-2 text-sm leading-6 text-slate-400">
-            Drag and drop your photos or browse your files.
-            Arrange them in the order buyers should see them.
-          </p>
-        </div>
-
-        <div className="mt-7">
+        <div className="p-6 sm:p-9">
           <VehiclePhotoUploader
-            files={selectedFiles}
-            onChange={setSelectedFiles}
+            files={files}
+            onChange={setFiles}
             remainingSlots={10}
-            disabled={busy}
+            disabled={submitting || createdId !== null}
           />
-        </div>
 
-        <div className="mt-5 rounded-xl border border-white/10 bg-[#0b1424] p-4">
-          <p className="text-sm font-semibold text-white">
-            Photo tips
-          </p>
-
-          <p className="mt-2 text-sm leading-6 text-slate-400">
-            Start with a clear front three-quarter exterior photo,
-            then add the sides, rear, interior, dashboard and any
-            visible wear or damage. Your first selected photo
-            becomes the initial cover.
+          <p className="mt-4 text-xs leading-6 text-slate-400">
+            Upload up to 10 JPG, PNG or WEBP photos,
+            maximum 5 MB each. Put your best photo first.
           </p>
         </div>
       </section>
 
-      {/* ERRORS AND SUCCESS */}
+      {/* ERRORS */}
 
       {error && (
         <div
           role="alert"
-          className="rounded-xl border border-red-500/30 bg-red-500/10 p-5 text-sm leading-6 text-red-200"
+          className="rounded-2xl border border-red-400/30 bg-red-950/40 p-5 text-sm text-red-200"
         >
-          <p className="font-semibold">
-            Could not finish listing
+          {error}
+        </div>
+      )}
+
+      {createdId !== null && !complete && (
+        <div className="rounded-2xl border border-amber-400/30 bg-amber-950/30 p-5 text-sm text-amber-100">
+          <p className="font-bold">
+            Your listing #{createdId} was created.
           </p>
-          <p className="mt-2">{error}</p>
 
-          {createdId !== null && (
-            <Link
-              href={`/my-listings/${createdId}/edit`}
-              className="mt-3 inline-block font-semibold text-white underline underline-offset-4"
-            >
-              Manage saved vehicle
-            </Link>
-          )}
+          <p className="mt-2">
+            If photo upload failed, check the listing before
+            uploading again. We won't create a duplicate vehicle.
+          </p>
+
+          <Link
+            href={`/my-listings/${createdId}/edit`}
+            className="mt-3 inline-block font-semibold text-blue-300 underline"
+          >
+            Manage listing photos
+          </Link>
         </div>
       )}
 
-      {success && (
-        <div
-          role="status"
-          className="rounded-xl border border-green-500/30 bg-green-500/10 p-5 text-sm text-green-200"
-        >
-          {success}
+      {/* PUBLISH */}
+
+      <section className="flex flex-wrap items-center justify-between gap-5 rounded-3xl border border-white/10 bg-[#0E1A2C] p-6 shadow-xl sm:p-8">
+        <div>
+          <h3 className="text-lg font-bold text-white">
+            Ready to publish?
+          </h3>
+
+          <p className="mt-1 text-sm text-slate-400">
+            Review your vehicle details and photos before publishing.
+          </p>
         </div>
-      )}
-
-      {/* SUBMIT */}
-
-      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <Link
-          href="/my-listings"
-          className="rounded-xl border border-white/15 px-6 py-3.5 text-center text-sm font-semibold text-slate-200 hover:bg-white/10"
-        >
-          Cancel
-        </Link>
 
         <button
           type="submit"
-          disabled={busy}
-          className="rounded-xl bg-blue-600 px-8 py-3.5 text-sm font-bold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={submitting || createdId !== null}
+          className="inline-flex min-h-14 items-center justify-center rounded-xl bg-blue-600 px-8 text-sm font-bold text-white shadow-lg shadow-blue-600/20 transition-all duration-200 hover:-translate-y-0.5 hover:bg-blue-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 motion-reduce:transform-none"
         >
-          {busy
-            ? "Processing..."
+          {submitting
+            ? "Publishing..."
             : createdId !== null
-              ? selectedFiles.length > 0
-                ? "Retry Photo Upload"
-                : "Finish Listing"
-              : "Publish Vehicle"}
+              ? "Listing created"
+              : "Publish Vehicle →"}
         </button>
-      </div>
+      </section>
     </form>
   );
 }
