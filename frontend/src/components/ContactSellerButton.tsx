@@ -4,7 +4,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-const API = "http://127.0.0.1:8000";
+const API = typeof window === "undefined" ? "http://127.0.0.1:8000" : window.location.origin;
 
 export default function ContactSellerButton({
   vehicleId,

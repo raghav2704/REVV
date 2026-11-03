@@ -11,7 +11,7 @@ import {
 } from "react";
 import SellerVehicleCover from "@/components/SellerVehicleCover";
 
-const API = "http://127.0.0.1:8000";
+const API = typeof window === "undefined" ? "http://127.0.0.1:8000" : window.location.origin;
 
 type Account = {
   id: number;

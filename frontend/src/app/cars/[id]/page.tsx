@@ -9,7 +9,7 @@ import {
   type VehiclePhoto,
 } from "@/components/CarSearch";
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = typeof window === "undefined" ? "http://127.0.0.1:8000" : window.location.origin;
 
 type PageProps = {
   params: Promise<{ id: string }>;

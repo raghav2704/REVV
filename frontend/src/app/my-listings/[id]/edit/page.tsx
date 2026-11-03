@@ -15,7 +15,7 @@ import VehicleSpecificationsFields, {
   type VehicleSpecifications,
 } from "@/components/VehicleSpecificationsFields";
 
-const API = "http://127.0.0.1:8000";
+const API = typeof window === "undefined" ? "http://127.0.0.1:8000" : window.location.origin;
 
 type Vehicle = {
   id: number;
