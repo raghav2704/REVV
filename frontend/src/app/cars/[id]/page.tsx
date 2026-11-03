@@ -9,7 +9,7 @@ import {
   type VehiclePhoto,
 } from "@/components/CarSearch";
 
-const API_URL = "";
+const API_URL = "http://127.0.0.1:8000";
 
 type PageProps = {
   params: Promise<{ id: string }>;
