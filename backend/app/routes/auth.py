@@ -1,4 +1,3 @@
-
 import hashlib
 import os
 import secrets
@@ -136,6 +135,25 @@ def get_current_user(
         )
 
     return user
+
+
+def get_optional_current_user(
+    revv_session: str | None = Cookie(default=None),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """Return the signed-in user, or None for anonymous/expired sessions."""
+    if not revv_session:
+        return None
+
+    session = db.scalar(
+        select(UserSession).where(
+            UserSession.token_hash == hash_token(revv_session)
+        )
+    )
+    if session is None or session.expires_at < datetime.now(timezone.utc):
+        return None
+
+    return db.get(User, session.user_id)
 
 
 @router.post(

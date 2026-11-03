@@ -1,17 +1,15 @@
 
 import io
 import logging
+import re
 import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 from typing import Annotated
 from app.routes.vehicle_catalogue import router as vehicle_catalogue_router
-from app.vehicle_spec_schemas import VehicleCreate, VehicleUpdate
 from app.routes.messaging import router as messaging_router
 from app.routes.deals import router as deals_router
-
-
-
+from app.vehicle_spec_schemas import VehicleCreate, VehicleUpdate
 
 from fastapi import (
     Depends,
@@ -24,7 +22,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field
@@ -36,6 +34,7 @@ from app.models import Vehicle, VehicleImage
 from app.models.user import User
 from app.routes.auth import (
     get_current_user,
+    get_optional_current_user,
     router as auth_router,
 )
 
@@ -93,11 +92,6 @@ UPLOAD_DIR = BACKEND_DIR / "uploads" / "vehicles"
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-app.mount(
-    "/uploads",
-    StaticFiles(directory=str(BACKEND_DIR / "uploads")),
-    name="uploads",
-)
 
 MAX_IMAGES_PER_VEHICLE = 10
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -115,6 +109,47 @@ def get_db():
     finally:
         db.close()
 
+
+
+# Uploaded photos are served through an authorized route, not StaticFiles.
+# This checks publication status on every request, including bookmarked URLs.
+def can_view_vehicle_photos(car: Vehicle, user: User | None) -> bool:
+    if car.listing_status == "active":
+        return True
+    return user is not None and (
+        user.role == "admin" or car.owner_id == user.id
+    )
+
+
+@app.get("/uploads/vehicles/{filename}")
+def serve_vehicle_photo(
+    filename: str,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_current_user),
+):
+    # REVV generates filenames with uuid.uuid4().hex + '.jpg'.
+    if not re.fullmatch(r"[0-9a-f]{32}\.jpg", filename):
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    photo = db.scalar(
+        select(VehicleImage).where(VehicleImage.filename == filename)
+    )
+    if photo is None:
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    car = db.get(Vehicle, photo.vehicle_id)
+    if car is None or not can_view_vehicle_photos(car, user):
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    path = UPLOAD_DIR / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    return FileResponse(
+        path,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 # --------------------------------------------------
@@ -872,10 +907,11 @@ async def upload_car_images(
 def get_car_images(
     car_id: int,
     db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_current_user),
 ):
     car = db.get(Vehicle, car_id)
 
-    if car is None:
+    if car is None or not can_view_vehicle_photos(car, user):
         raise HTTPException(
             status_code=404,
             detail="Vehicle not found",
@@ -884,18 +920,12 @@ def get_car_images(
     images = db.scalars(
         select(VehicleImage)
         .where(VehicleImage.vehicle_id == car_id)
-        .order_by(
-            VehicleImage.position,
-            VehicleImage.id,
-        )
+        .order_by(VehicleImage.position, VehicleImage.id)
     ).all()
 
     return {
         "vehicle_id": car_id,
-        "images": [
-            image_to_dict(image)
-            for image in images
-        ],
+        "images": [image_to_dict(image) for image in images],
     }
 
 
