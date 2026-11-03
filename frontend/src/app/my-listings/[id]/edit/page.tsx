@@ -1,4 +1,3 @@
-
 "use client";
 
 import Link from "next/link";
@@ -336,27 +335,28 @@ export default function EditVehiclePage() {
 
       await checkResponse(response);
 
-      // A 200 response alone doesn't prove that the backend persisted
-      // the new V2 fields. Fetch the saved record and verify each field.
-      const verifyResponse = await fetch(`${API}/api/v1/cars/${id}`, {
-        credentials: "include",
-        cache: "no-store",
-      });
-      await checkResponse(verifyResponse);
-      const saved = unwrap<Vehicle>(await verifyResponse.json());
-      const unpersisted = Object.entries(specifications).filter(([key, value]) => {
-        const actual = saved[key as keyof VehicleSpecifications];
+      // The PATCH response contains the committed vehicle, including drafts.
+      // The public GET /api/v1/cars/{id} intentionally returns 404 for
+      // unpublished vehicles, so it must not be used to verify draft saves.
+      const saved = unwrap<Vehicle>(await response.json());
+
+      if (!saved || saved.id !== Number(id)) {
+        throw new Error("The server returned an unexpected vehicle record.");
+      }
+
+      const unpersisted = Object.entries(payload).filter(([key, value]) => {
+        const actual = saved[key as keyof Vehicle];
         return (actual ?? null) !== (value ?? null);
       });
 
       if (unpersisted.length > 0) {
         throw new Error(
-          `The server accepted the update but did not return these saved fields: ${unpersisted.map(([key]) => key).join(", ")}. Check your FastAPI PATCH handler and vehicle_to_dict serializer.`
+          `The server accepted the update but returned different values for: ${unpersisted.map(([key]) => key).join(", ")}. Check the FastAPI PATCH handler and vehicle serializer.`
         );
       }
 
       setVehicle(saved);
-      setSuccess("Vehicle details saved and verified successfully.");
+      setSuccess("Vehicle details saved successfully.");
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Save failed."
