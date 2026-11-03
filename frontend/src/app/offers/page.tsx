@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 
-const API = typeof window === "undefined" ? "http://127.0.0.1:8000" : window.location.origin;
+const API = "";
 
 type Account = {
   id: number;

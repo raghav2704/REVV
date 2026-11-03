@@ -4,7 +4,7 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
-const API_URL = typeof window === "undefined" ? "http://127.0.0.1:8000" : window.location.origin;
+const API_URL = "";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");

@@ -5,7 +5,7 @@ import CarSearch, {
   type VehiclePhoto,
 } from "@/components/CarSearch";
 
-const API_URL = typeof window === "undefined" ? "http://127.0.0.1:8000" : window.location.origin;
+const API_URL = "http://127.0.0.1:8000";
 
 type MarketplaceResult = {
   cars: Car[];

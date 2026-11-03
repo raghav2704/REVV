@@ -13,7 +13,7 @@ import VehicleSpecificationsFields, {
   type VehicleSpecifications,
 } from "@/components/VehicleSpecificationsFields";
 
-const API = typeof window === "undefined" ? "http://127.0.0.1:8000" : window.location.origin;
+const API = "";
 
 type Make = {
   id: number;

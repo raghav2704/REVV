@@ -1,23 +1,13 @@
-
 "use client";
 
 import Link from "next/link";
-import {
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useEffect, useMemo, useState } from "react";
 
-const API = typeof window === "undefined" ? "http://127.0.0.1:8000" : window.location.origin;
+// Browser requests use the same origin as Next.js so sessions work on
+// both localhost and 127.0.0.1. The Next.js rewrites forward to FastAPI.
+const API = "";
 
-export type VehiclePhoto = {
-  id: number;
-  url: string;
-  is_cover: boolean;
-  position: number;
-};
-
-export type Car = {
+type Car = {
   id: number;
   make: string;
   model: string;
@@ -25,55 +15,35 @@ export type Car = {
   price_nzd: number;
   mileage_km: number;
   location: string;
-  variant?: string | null;
   body_type?: string | null;
-  exterior_colour?: string | null;
-  seats?: number | null;
   fuel_type?: string | null;
   transmission?: string | null;
   drivetrain?: string | null;
-  engine_cc?: number | null;
   condition?: string | null;
-  vehicle_origin?: string | null;
-  description?: string | null;
-  images?: VehiclePhoto[];
 };
 
-type VehicleMake = {
+type VehicleMake = { id: number; name: string };
+type VehicleModel = { id: number; name: string };
+type SpecFilter = "body_type" | "fuel_type" | "transmission" | "drivetrain" | "condition";
+type SortOption = "recent" | "price-low" | "price-high" | "year-new" | "year-old" | "mileage-low" | "mileage-high";
+
+type VehicleImage = {
   id: number;
-  name: string;
+  url: string;
+  is_cover: boolean;
+  position: number;
 };
 
-type VehicleModel = {
-  id: number;
-  make_id: number;
-  name: string;
-};
-
-type SortOption =
-  | "recent"
-  | "price-low"
-  | "price-high"
-  | "year-new"
-  | "year-old"
-  | "mileage-low"
-  | "mileage-high";
-
-const inputClass =
-  "w-full min-h-12 rounded-xl border border-[#30415D] bg-[#111E32] px-4 py-3 text-sm text-white placeholder:text-slate-400 outline-none transition hover:border-blue-400/50 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50";
-
-const SPEC_OPTIONS = {
-  body_type: ["Sedan", "SUV", "Hatchback", "Wagon", "Coupe", "Convertible", "Ute", "Van", "People Mover", "Other"],
+const SPEC_OPTIONS: Record<SpecFilter, string[]> = {
+  body_type: ["Sedan", "Hatchback", "SUV", "Wagon", "Coupe", "Convertible", "Ute", "Van", "Other"],
   fuel_type: ["Petrol", "Diesel", "Hybrid", "Plug-in Hybrid", "Electric", "Other"],
   transmission: ["Automatic", "Manual", "CVT", "Other"],
   drivetrain: ["FWD", "RWD", "AWD", "4WD", "Other"],
-  condition: ["New", "Used", "Demonstrator"],
-} as const;
+  condition: ["New", "Used", "Demo", "Other"],
+};
 
-type SpecFilter = keyof typeof SPEC_OPTIONS;
-
-const labelClass =
-  "mb-2 block text-xs font-bold uppercase tracking-[0.1em] text-slate-300";
+const labelClass = "mb-2 block text-sm font-semibold text-slate-200";
+const inputClass = "w-full rounded-xl border border-white/15 bg-[#0B1628] px-4 py-3 text-sm text-white outline-none focus:border-blue-500";
 
 function money(value: number): string {
   return new Intl.NumberFormat("en-NZ", {
@@ -87,186 +57,75 @@ function number(value: number): string {
   return new Intl.NumberFormat("en-NZ").format(value);
 }
 
-function photoUrl(url: string): string {
+// The gallery API returns /uploads/... paths. Keeping image URLs
+// relative ensures SSR and browser hydration generate the same value.
+function photoUrl(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  if (value.startsWith("/uploads/vehicles/")) return value;
   try {
-    return new URL(url, API).toString();
+    const parsed = new URL(value);
+    if (
+      parsed.pathname.startsWith("/uploads/vehicles/") &&
+      ["http://127.0.0.1:8000", "http://localhost:8000", "http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:3001", "http://localhost:3001"].includes(parsed.origin)
+    ) {
+      return parsed.pathname;
+    }
   } catch {
-    return "";
+    // Ignore malformed paths rather than rendering src="".
   }
+  return null;
 }
-
-function coverPhoto(
-  images: VehiclePhoto[] = []
-): VehiclePhoto | undefined {
-  const sorted = [...images].sort(
-    (a, b) =>
-      a.position - b.position || a.id - b.id
-  );
-
-  return (
-    sorted.find((image) => image.is_cover) ??
-    sorted[0]
-  );
-}
-
-/* ============================================================
-   VEHICLE GALLERY
-
-   Preserved export for the existing vehicle detail pages.
-============================================================ */
-
-export function VehicleGallery({
-  images,
-  title,
-}: {
-  images: VehiclePhoto[];
-  title: string;
-}) {
-  const sorted = useMemo(
-    () =>
-      [...images].sort(
-        (a, b) =>
-          a.position - b.position || a.id - b.id
-      ),
-    [images]
-  );
-
-  const [activeIndex, setActiveIndex] = useState(0);
-
-  const coverIndex = Math.max(
-    0,
-    sorted.findIndex((image) => image.is_cover)
-  );
-
-  const selectedIndex =
-    activeIndex >= 0 &&
-    activeIndex < sorted.length
-      ? activeIndex
-      : coverIndex;
-
-  if (sorted.length === 0) {
-    return (
-      <div className="flex aspect-video items-center justify-center rounded-2xl border border-slate-200 bg-slate-100">
-        <div className="text-center">
-          <div className="text-5xl" aria-hidden="true">
-            🚘
-          </div>
-          <p className="mt-3 text-sm font-medium text-slate-500">
-            No vehicle photos available
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const active = sorted[selectedIndex];
-
-  return (
-    <div className="space-y-4">
-      <div className="relative overflow-hidden rounded-2xl bg-[#0B1628]">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={photoUrl(active.url)}
-          alt={`${title} — photo ${selectedIndex + 1}`}
-          className="aspect-video w-full object-contain"
-        />
-
-        <div className="absolute bottom-4 right-4 rounded-full border border-white/15 bg-black/70 px-4 py-2 text-xs font-bold text-white backdrop-blur-md">
-          {selectedIndex + 1} / {sorted.length}
-        </div>
-
-        {sorted.length > 1 && (
-          <>
-            <button
-              type="button"
-              onClick={() =>
-                setActiveIndex(
-                  (selectedIndex - 1 + sorted.length) %
-                    sorted.length
-                )
-              }
-              aria-label="Previous photo"
-              className="absolute left-3 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-blue-600"
-            >
-              ←
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                setActiveIndex(
-                  (selectedIndex + 1) % sorted.length
-                )
-              }
-              aria-label="Next photo"
-              className="absolute right-3 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-blue-600"
-            >
-              →
-            </button>
-          </>
-        )}
-      </div>
-
-      {sorted.length > 1 && (
-        <div className="grid grid-cols-4 gap-3 sm:grid-cols-6">
-          {sorted.map((image, index) => (
-            <button
-              key={image.id}
-              type="button"
-              onClick={() => setActiveIndex(index)}
-              aria-label={`View photo ${index + 1}`}
-              aria-pressed={selectedIndex === index}
-              className={`overflow-hidden rounded-xl border-2 transition ${
-                selectedIndex === index
-                  ? "border-blue-500"
-                  : "border-transparent hover:border-blue-300"
-              }`}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={photoUrl(image.url)}
-                alt={`${title} thumbnail ${index + 1}`}
-                className="aspect-square w-full bg-slate-100 object-cover"
-              />
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ============================================================
-   VEHICLE LISTING CARD
-============================================================ */
 
 function VehicleCard({ car }: { car: Car }) {
-  const image = coverPhoto(car.images);
-  const imageCount = car.images?.length ?? 0;
+  const [images, setImages] = useState<VehicleImage[]>([]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadImages() {
+      try {
+        const response = await fetch(`${API}/api/v1/cars/${car.id}/images`, {
+          signal: controller.signal,
+          cache: "no-store",
+          credentials: "include",
+        });
+        if (!response.ok) return;
+        const result: { images?: VehicleImage[] } = await response.json();
+        if (!controller.signal.aborted && Array.isArray(result.images)) {
+          setImages(result.images);
+        }
+      } catch {
+        // Vehicle remains visible even when its gallery cannot load.
+      }
+    }
+    void loadImages();
+    return () => controller.abort();
+  }, [car.id]);
+
+  const sorted = [...images].sort(
+    (a, b) => Number(b.is_cover) - Number(a.is_cover) || a.position - b.position || a.id - b.id
+  );
+  const imageCount = sorted.length;
+  const image = sorted.find((entry) => photoUrl(entry.url) !== null);
+  const coverSrc = image ? photoUrl(image.url) : null;
 
   return (
-    <article className="group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-all duration-300 ease-out hover:-translate-y-1 hover:border-blue-300 hover:shadow-[0_20px_50px_rgba(15,23,42,0.14)] motion-reduce:transform-none">
+    <article className="group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-xl">
       <Link
         href={`/cars/${car.id}`}
         aria-label={`View ${car.year} ${car.make} ${car.model}`}
         className="relative block h-56 overflow-hidden bg-[#111E32]"
       >
-        {image ? (
+        {coverSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={photoUrl(image.url)}
+            src={coverSrc}
             alt={`${car.year} ${car.make} ${car.model}`}
             loading="lazy"
-            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105 motion-reduce:transform-none"
+            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
         ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-3 bg-gradient-to-br from-[#142641] to-[#08111F] text-slate-400">
-            <span className="text-5xl" aria-hidden="true">
-              🚘
-            </span>
-            <span className="text-xs font-medium">
-              Photos coming soon
-            </span>
+          <div className="flex h-full items-center justify-center bg-[#111E32] text-sm font-medium text-slate-400">
+            No photo available
           </div>
         )}
 

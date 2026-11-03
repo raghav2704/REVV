@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 import MessagesNavLink from "@/components/MessagesNavLink";
 import DealsNavLinks from "@/components/DealsNavLinks";
 
-const API = typeof window === "undefined" ? "http://127.0.0.1:8000" : window.location.origin;
+const API = "";
 
 type User = {
   id: number;
