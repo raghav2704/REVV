@@ -1,3 +1,4 @@
+import Revv3DHero from "@/components/hero3d/Revv3DHero";
 
 import Link from "next/link";
 import CarSearch, {
@@ -101,137 +102,13 @@ export default async function Home() {
     <main className="min-h-screen bg-[#080f1c] text-white">
 
       {/* ===================================
-          HERO — AUCKLAND AUTOMOTIVE IMAGE
+          HERO — SCROLL-CONTROLLED AUCKLAND 3D
       =================================== */}
 
-      <section className="relative isolate flex min-h-[680px] items-center overflow-hidden bg-[#080f1c] md:min-h-[720px] lg:min-h-[760px]">
-
-        {/* Full-width background photograph */}
-        <div
-  aria-hidden="true"
-  className="absolute inset-0 -z-30 bg-cover bg-center bg-no-repeat"
-  style={{
-    backgroundImage: "url('/revv-background.png')",
-    backgroundPosition: "center center",
-  }}
-/>
-
-        {/* Darker behind text, lighter over the car */}
-        <div
-          aria-hidden="true"
-          className="absolute inset-0 -z-20 bg-gradient-to-r from-[#050c18]/85 via-[#050c18]/45 to-transparent"
-        />
-
-        {/* Gentle top and bottom shading */}
-        <div
-          aria-hidden="true"
-          className="absolute inset-0 -z-10 bg-gradient-to-b from-[#050c18]/10 via-transparent to-[#080f1c]/80"
-        />
-
-        <div className="relative mx-auto flex w-full max-w-[1440px] flex-col justify-center px-6 py-24 sm:px-10 lg:px-16">
-
-          <div className="max-w-[670px]">
-
-            <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-blue-400/30 bg-[#112746]/60 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-100 backdrop-blur-md">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-blue-400" />
-              A NEW ERA OF AUTOMOTIVE
-            </div>
-
-            <div className="mt-8">
-  <h1
-    className="text-[90px] font-black leading-none tracking-[-0.09em] text-white sm:text-[120px] lg:text-[160px]"
-    aria-label="REVV"
-  >
-    REV<span className="text-blue-500">V</span>
-  </h1>
-
-  <h2 className="mt-4 text-2xl font-bold tracking-tight text-white sm:text-3xl lg:text-4xl">
-    Drive Smarter.
-    <span className="text-blue-300"> Buy Better.</span>
-  </h2>
-</div>
-
-            <p className="mt-7 max-w-lg text-base leading-8 text-slate-100 md:text-lg">
-              The next generation of buying, selling
-              and managing vehicles in New Zealand.
-            </p>
-
-            <p className="mt-3 max-w-lg text-sm leading-7 text-slate-300">
-              One premium marketplace for drivers,
-              private sellers and dealerships of every size.
-            </p>
-
-            <div className="mt-9 flex flex-wrap items-center gap-3">
-              <a
-                href="#explore"
-                className="inline-flex min-h-12 items-center justify-center rounded-xl bg-blue-600 px-7 py-3.5 text-sm font-bold text-white shadow-xl shadow-blue-950/30 transition hover:bg-blue-500 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
-              >
-                Explore Vehicles
-                <span className="ml-3" aria-hidden="true">
-                  →
-                </span>
-              </a>
-
-              <Link
-                href="/sell"
-                className="inline-flex min-h-12 items-center justify-center rounded-xl border border-white/35 bg-[#101c30]/45 px-7 py-3.5 text-sm font-bold text-white backdrop-blur-md transition hover:bg-white/15"
-              >
-                Sell Your Vehicle
-              </Link>
-            </div>
-
-          </div>
-
-          {/* Hero statistics */}
-          <div className="mt-16 max-w-[720px] border-t border-white/25 pt-7 sm:mt-20">
-            <div className="grid grid-cols-3 gap-4 sm:gap-8">
-              <div>
-                <p className="text-2xl font-bold tracking-tight sm:text-3xl">
-                  {error
-                    ? "—"
-                    : cars.length.toLocaleString("en-NZ")}
-                </p>
-                <p className="mt-1 text-xs text-slate-300">
-                  Vehicles listed
-                </p>
-              </div>
-
-              <div>
-                <p className="text-2xl font-bold tracking-tight sm:text-3xl">
-                  {error
-                    ? "—"
-                    : locations.size.toLocaleString("en-NZ")}
-                </p>
-                <p className="mt-1 text-xs text-slate-300">
-                  NZ locations
-                </p>
-              </div>
-
-              <div>
-                <p className="text-2xl font-bold tracking-tight text-blue-300 sm:text-3xl">
-                  REVV
-                </p>
-                <p className="mt-1 text-xs text-slate-300">
-                  Built in NZ
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <p className="mt-5 max-w-xl text-xs leading-5 text-slate-300">
-            REVV is in development. Current listings
-            are demonstration and testing data.
-          </p>
-        </div>
-
-        <a
-          href="#explore"
-          aria-label="Scroll to vehicle marketplace"
-          className="absolute bottom-5 left-1/2 hidden -translate-x-1/2 text-xs text-slate-300 transition hover:text-white md:flex md:items-center md:gap-2"
-        >
-          Discover more <span aria-hidden="true">↓</span>
-        </a>
-      </section>
+      <Revv3DHero
+        vehicleCount={error ? null : cars.length}
+        locationCount={error ? null : locations.size}
+      />
 
       {/* ===================================
           MARKETPLACE

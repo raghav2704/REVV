@@ -1,0 +1,85 @@
+Current live hero: real-time 3D BMW M4 CSL, November 2026.
+BMW m4 CSL 2023 by Black Snow, CC BY 4.0.
+Author: https://sketchfab.com/BlackSnow02
+Source: https://sketchfab.com/3d-models/bmw-m4-csl-2023-26d05968e63b4fc28205cbb9abb0ea41
+Local model: bmw-m4-csl.glb. See complete source/distributor records below.
+REVV changes: material batching, charcoal physical paint, reflective tinted glass,
+separate rotating wheel pivots, body-only braking dip, shallow road curve,
+road-projected camera framing, tyre contact shadows and low-opacity reflection.
+Lighting: Venice Sunset by Greg Zaal / Poly Haven, CC0, credited below.
+User-supplied reference dusk illustration / clean plate remains the background.
+This is a composite setting, not a verified photograph of Auckland.
+The BMW image layer is no longer used for driving animation. The user-supplied
+original composition remains the static/reduced-motion fallback.
+No affiliation with or endorsement by BMW or asset creators is implied.
+
+Historical assets / earlier implementation details retained for provenance:
+
+The earlier 3D assets below are retained for rollback and their original credits.
+
+REVV Auckland 3D hero — asset credits
+
+Current vehicle: Car Concept by Eric Chadwick, Darmstadt Graphics Group GmbH, 2024.
+Source: https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/CarConcept
+License: CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
+Model/texture attribution and documentation:
+https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CarConcept/README.md
+Based on Unity Fan's CC0 Free Concept Car 004, subsequently optimized and textured
+by the credited author. It is a generic concept coupe, not a specific production car.
+REVV changes: WebP texture encoding, meshopt geometry compression, charcoal paint,
+material batching preserving AO/normal maps, wheel straightening/pivots, body-only
+suspension movement and mirrored wet-road reflection. Promotional badge meshes
+are omitted from the live presentation. See KHRONOS-MARKS.txt for marks retained
+in the source asset. No endorsement or affiliation is implied.
+
+Lighting only: Venice Sunset HDRI by Greg Zaal / Poly Haven, CC0.
+https://polyhaven.com/a/venice_sunset
+https://polyhaven.com/license
+The HDRI supplies reflections/lighting only. The visible skyline is the user's
+reference illustration, not Venice.
+
+Visible background: user-supplied revv-background.png. A clean background plate
+was produced with the built-in image generation tool, removing the parked car,
+its shadow and car-specific reflections while preserving the reference scene.
+Local assets: reference-dusk-plate.webp (animated scene), reference-still.webp
+(original supplied composition used for reduced motion / static mode).
+This is a reference illustration, not a verified photograph of Auckland.
+
+Previous unused assets and their credits follow for provenance:
+
+Previous vehicle: BMW m4 CSL 2023 by Black Snow.
+Author: https://sketchfab.com/BlackSnow02
+Original: https://sketchfab.com/3d-models/bmw-m4-csl-2023-26d05968e63b4fc28205cbb9abb0ea41
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+Model metadata embeds the author, title, source and CC-BY-4.0 licence.
+Distributed optimized GLB: https://github.com/pedrosoandre/carros/blob/main/assets/bmw-m4-csl.glb
+Distributor licensing record: https://github.com/pedrosoandre/carros/blob/main/LICENSE-3D-MODELS.md
+Distributor modifications: welding, geometry simplification, pruning and meshopt compression.
+REVV modifications: dark navy paint, light tuning, road-axis normalization,
+material batching and independent wheel animation. Retrieved 9 November 2026.
+BMW names and marks belong to their respective owner. No endorsement is implied.
+
+Previous unused generic sedan asset: Graphite four-door sedan, Innerscene, CC0.
+https://www.innerscene.com/tools/library/3d-parts/graphite-four-door-sedan-eed96d12
+
+Previous unused photographic Auckland backdrop (earlier iteration):
+"Sunset Over Auckland Skyline" by James Shih, photographed from Mount Victoria,
+2 January 2022. Real Auckland CBD, Sky Tower, port and Waitemata Harbour.
+https://commons.wikimedia.org/wiki/File:Sunset_Over_Auckland_Skyline.jpg
+Original: https://upload.wikimedia.org/wikipedia/commons/f/f4/Sunset_Over_Auckland_Skyline.jpg
+License: CC BY-SA 4.0 — https://creativecommons.org/licenses/by-sa/4.0/
+Local derivative: auckland-waterfront.webp, released under CC BY-SA 4.0.
+Changes: cropped original pixels x=2500..7699, resized to 4096x1260 and converted
+to WebP. Runtime framing and separate foreground shading blend it with the 3D scene.
+No buildings or sky were generated or invented in the photograph.
+Retrieved 9 November 2026. This is a 2022 photograph, not a live city feed.
+
+Foreground road, curb, railing, lighting and camera choreography: authored 3D
+geometry/code for REVV. This is a composite scenic setting, not a surveyed road
+location. The BMW and road remain interactive 3D; the distant city is photographic.
+The previous procedural skyline is no longer rendered.
+
+Runtime: Three.js (MIT), React Three Fiber (MIT), Drei (MIT), GSAP (Standard GSAP
+License; https://gsap.com/community/standard-license/). See installed packages
+for licence texts. No external runtime model, HDR or decoder CDN required.
