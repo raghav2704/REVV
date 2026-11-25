@@ -4,11 +4,11 @@ import logging
 import re
 import uuid
 from pathlib import Path
-from urllib.parse import urlsplit
 from typing import Annotated
 from app.routes.vehicle_catalogue import router as vehicle_catalogue_router
 from app.routes.messaging import router as messaging_router
 from app.routes.deals import router as deals_router
+from app.routes.recommendations import router as recommendations_router
 from app.vehicle_spec_schemas import VehicleCreate, VehicleUpdate
 
 from fastapi import (
@@ -22,9 +22,15 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from app.security import ALLOWED_ORIGINS, ALLOWED_HOSTS, PRODUCTION, SecurityMiddleware, verify_write_origin
 
 from PIL import Image, ImageOps, UnidentifiedImageError
+# Register only supported decoders. Broad Image.init() loads unused native
+# codecs, and a malformed upload must not trigger those optional modules.
+from PIL import JpegImagePlugin as _jpeg_plugin, PngImagePlugin as _png_plugin, WebPImagePlugin as _webp_plugin
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -49,12 +55,16 @@ app = FastAPI(
     title="REVV API",
     description="New Zealand Automotive Marketplace API",
     version="1.0.0",
+    docs_url=None if PRODUCTION else "/docs",
+    redoc_url=None if PRODUCTION else "/redoc",
+    openapi_url=None if PRODUCTION else "/openapi.json",
 )
 
 app.include_router(auth_router)
 app.include_router(vehicle_catalogue_router)
 app.include_router(messaging_router)
 app.include_router(deals_router)
+app.include_router(recommendations_router)
 
 
 
@@ -63,25 +73,32 @@ app.include_router(deals_router)
 # CORS
 # --------------------------------------------------
 
-FRONTEND_ORIGINS = {
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-}
-
-ALLOWED_WRITE_ORIGINS = FRONTEND_ORIGINS | {
-    "http://127.0.0.1:8000",
-    "http://localhost:8000",
-}
-
+FRONTEND_ORIGINS = ALLOWED_ORIGINS
+ALLOWED_WRITE_ORIGINS = ALLOWED_ORIGINS
+app.add_middleware(SecurityMiddleware)
+if PRODUCTION:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+# CORS stays outermost so browser clients can read permitted error responses.
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=sorted(FRONTEND_ORIGINS),
+    CORSMiddleware, allow_origins=sorted(FRONTEND_ORIGINS),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
     allow_headers=["Content-Type"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def safe_validation_error(request, error):
+    # Pydantic's default response includes raw input, including passwords.
+    errors = [{"loc": item["loc"], "msg": item["msg"], "type": item["type"]} for item in error.errors()]
+    return JSONResponse(status_code=422, content={"detail": errors})
+
+
+@app.exception_handler(Exception)
+async def safe_internal_error(request, error):
+    # Never log exception text/SQL parameters, cookies or request bodies.
+    logging.getLogger("revv.security").error("event=internal_error type=%s", type(error).__name__)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 # --------------------------------------------------
 # FILE STORAGE
@@ -364,37 +381,6 @@ def reorder_vehicle_photos(
 
 # SECURITY HELPERS
 # --------------------------------------------------
-
-def verify_write_origin(request: Request):
-    """
-    Local development CSRF protection.
-
-    Reject browser-changing requests unless the Origin
-    or Referer matches an explicitly trusted origin.
-
-    This is not a replacement for production HTTPS,
-    CSRF tokens and a full security review.
-    """
-
-    origin = request.headers.get("origin")
-
-    if not origin:
-        referer = request.headers.get("referer", "")
-
-        if referer:
-            parsed = urlsplit(referer)
-
-            if parsed.scheme and parsed.netloc:
-                origin = (
-                    f"{parsed.scheme}://{parsed.netloc}"
-                )
-
-    if origin not in ALLOWED_WRITE_ORIGINS:
-        raise HTTPException(
-            status_code=403,
-            detail="Request origin is not allowed",
-        )
-
 
 def require_listing_access(
     car_id: int,
@@ -756,7 +742,7 @@ async def upload_car_images(
 
             try:
                 with Image.open(
-                    io.BytesIO(raw)
+                    io.BytesIO(raw), formats=["JPEG", "PNG", "WEBP"]
                 ) as source:
                     if source.format not in {
                         "JPEG",
@@ -785,7 +771,7 @@ async def upload_car_images(
                     source.verify()
 
                 with Image.open(
-                    io.BytesIO(raw)
+                    io.BytesIO(raw), formats=["JPEG", "PNG", "WEBP"]
                 ) as source:
                     processed = ImageOps.exif_transpose(
                         source

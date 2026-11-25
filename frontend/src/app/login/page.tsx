@@ -18,7 +18,6 @@ export default function LoginPage() {
   ) {
     event.preventDefault();
 
-    console.log("REVV login form submitted");
 
     if (loading) return;
 
@@ -43,7 +42,6 @@ export default function LoginPage() {
 
       const data = await response.json().catch(() => null);
 
-      console.log("REVV login response status:", response.status);
 
       if (!response.ok) {
         throw new Error(
@@ -68,12 +66,10 @@ export default function LoginPage() {
         );
       }
 
-      console.log("REVV session verified. Redirecting.");
 
       // Use a full navigation rather than client-side routing.
       window.location.assign("/");
     } catch (err) {
-      console.error("REVV login error:", err);
 
       if (err instanceof TypeError) {
         setError(

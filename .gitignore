@@ -17,3 +17,6 @@ out/
 # macOS
 .DS_Store
 *.swp
+
+# Private authentication rate-limit state (not a user database backup)
+backend/.security/

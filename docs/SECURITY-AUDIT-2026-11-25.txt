@@ -1,0 +1,256 @@
+REVV SECURITY AUDIT AND HARDENING
+Completed 25 November 2026 — local development repository
+
+RESULT
+77 automated security tests pass under the existing backend environment and
+under a separate verification environment. Frontend TypeScript and production
+build pass. No Critical vulnerability was confirmed. Cross-account access was
+denied in the tested vehicle, photo, conversation, offer, watchlist, account and
+admin flows. Confirmed High application issues were fixed; a High deployment
+configuration risk remains. This is NOT approval to deploy publicly and is not
+an ASVS certification.
+
+SCOPE AND SAFETY
+Reviewed Next.js frontend/configuration, FastAPI routes, SQLAlchemy models,
+SQL queries and migrations, PostgreSQL connection configuration, sessions,
+password handling, uploads, and dependency inventories. Used OWASP API Security
+Top 10 (2023) and ASVS 5.0.0 as reference frameworks.
+
+No existing account, listing, message, offer, watchlist, session or upload was
+created, changed or deleted by the tests. A separate PostgreSQL process was
+blocked by the OS sandbox. Tests instead used one connection to the local
+PostgreSQL server with search_path=pg_temp, exclusively TEMPORARY tables and
+fictional records. All temporary tables disappear on disconnect. Test uploads
+and limiter files use temporary directories. The runner rejects other database
+URLs. No persistent schema migration or role/HBA change was applied.
+
+The running application's database was queried only for role/connection security
+metadata, not private user records. Two vulnerable Python packages were updated
+in the existing virtual environment; this changes code dependencies, not data.
+No commit or push was made. Existing 3D hero and marketplace source functionality
+were preserved. Reports contain no actual credentials or session tokens.
+
+FINDINGS BY SEVERITY
+
+CRITICAL
+None confirmed within the assessed scope. This is not a guarantee of absence.
+
+HIGH
+H01 — Unthrottled login and registration. FIXED.
+Baseline allowed eleven failed login attempts and six registrations without 429.
+Added transactional, persistent SQLite throttling: 10 login attempts/IP/minute,
+30 attempts/account/10 minutes, five registrations/IP/hour. Account/IP keys use
+HMAC with a private persisted key. State is outside uploads, mode 0600, capped
+at 50,000 live keys, and connections are explicitly closed. Storage failure
+returns 503; exceeding the limit returns 429/Retry-After. Concurrent limiter
+attempts are tested. Shared state supports multiple workers on ONE host only.
+Multi-host centralized throttling remains an operational requirement.
+
+H02 — Malformed image could crash the existing Python process. FIXED.
+The original environment produced a native Bus error when Pillow auto-loaded
+its unused AVIF decoder while examining an invalid upload. The application now
+pre-registers only JPEG/PNG/WebP and passes an explicit decoder allowlist to
+both Image.open operations. Malformed files return 400; all three supported
+formats still upload. Tests assert the AVIF plugin was not imported. The full
+suite now passes in the same environment that previously crashed.
+This was an observed environment-specific crash, not an asserted Pillow CVE.
+
+H03 — No application-wide pre-parser request-body bound. FIXED PER REQUEST.
+Added actual streamed-byte counting as well as Content-Length checks, before
+request parsing. Ordinary requests are capped at 64 KiB; image batches at
+52 MiB. Existing 5 MiB/file, ten photos/listing and 25-million-pixel restrictions
+remain. Tests cover declared and chunked over-limit requests. Overall concurrency,
+slow-client, account-storage and gateway limits remain necessary; these controls
+do not eliminate every resource-exhaustion attack.
+
+H04 — Development database/settings are unsafe for production. GUARDED;
+LOCAL INFRASTRUCTURE UNCHANGED, PRODUCTION RELEASE BLOCKER.
+Read-only inspection found a local role with SUPERUSER/CREATEDB/CREATEROLE,
+trust authentication, a localhost-only listener and no TLS on that connection.
+These are local development conditions; remote exploitation was not demonstrated.
+Production mode now requires explicit HTTPS origins, allowed hosts, secure
+cookies, a private persistent limiter path and DATABASE_URL. Remote PostgreSQL
+requires sslmode=verify-full. On database connection, production rejects a role
+with SUPERUSER, CREATEDB or CREATEROLE. Production API docs are disabled.
+Configuration and privilege-guard logic are tested. No production infrastructure
+was provisioned, no DB password/role was changed, and HBA trust rules were not
+changed. Do not copy this development DB/HBA setup into production.
+
+H05 — dnspython 2.9.0, CVE-2026-128089 / GHSA-vvf4-9x63-8xvv. FIXED INSTALLED
+DEPENDENCY AND MANIFEST.
+Updated the existing environment to 2.9.2 and pinned that version. Upstream
+rates the advisory High. Its zone-file parsing path was not found exposed by
+REVV, so application exploitability was not established. Rollback distribution
+wheels were saved outside the project before updating.
+
+MEDIUM
+M01 — Auth writes omitted the shared origin check. FIXED.
+A single middleware now checks every unsafe method, including login,
+registration and logout. Exact allowlisted Origin or Referer is required;
+missing, null, duplicate and lookalike origins are denied. Existing cookie
+SameSite=Lax and restrictive CORS remain. Baseline cross-origin API requests
+were accepted; a complete browser account-takeover exploit was not demonstrated
+because JSON preflight/SameSite already provided partial protections.
+
+M02 — Offer responses bypassed offer-creation throttling. FIXED.
+Creation and responses now share a PostgreSQL-backed five-actions/minute limit,
+using a per-user advisory transaction lock and event count. Existing participant,
+turn-taking, terminal-state and offer row-lock checks remain. Message sending
+retains its existing database-backed ten-messages/minute limit. Limits and valid
+buyer/seller negotiations are exercised by tests.
+
+M03 — Validation errors could echo a submitted password. FIXED.
+The default Pydantic error response exposed raw invalid input. Responses now
+include only location, message and error type; raw input/context are excluded.
+Login password length is bounded. Unexpected application errors return a generic
+500, SQLAlchemy hides parameters, and security logs omit request bodies,
+credentials and tokens. Tests prove the submitted password is not echoed.
+
+M04 — opentelemetry-api 1.45.1, CVE-2026-126360 / GHSA-mf5v-w3w3-f6cg. FIXED.
+Updated the existing environment and manifest to 1.45.2. The vulnerable untrusted
+carrier path was not demonstrated in REVV. Existing environment audit subsequently
+reported no known vulnerabilities across the inventoried distributions.
+
+M05 — Admin MFA and sensitive-operation step-up are absent. UNRESOLVED.
+Admin endpoints do enforce the server-side role. No MFA enrollment, factor
+verification, recovery or verified-factor session claim exists. MFA readiness
+recommendations are in SECURITY-OPERATIONS.txt. Do not treat password-only admin
+sessions as meeting an MFA requirement or expose public administration yet.
+
+M06 — Upload/storage/concurrency and broad read limits are incomplete. UNRESOLVED.
+No account-wide storage quota, image-processing isolation/concurrency budget,
+global edge rate limit, or durable abuse monitoring is configured. Multiple
+simultaneous uploads may race the ten-photo count. Public inventory reads are
+unpaginated and the homepage makes per-listing image requests. Per-request bounds
+and existing ownership controls help, but do not resolve these aggregate risks.
+
+M07 — Strict script CSP is absent. PARTIALLY HARDENED.
+Added nosniff, frame denial, referrer/permissions policies, and CSP restrictions
+on framing, objects, base URLs and form destinations. Production enables HSTS.
+The CSP does not restrict script execution; a nonce-based script policy remains
+to be designed/tested with Next hydration and Three.js/WASM. No unsafe raw-HTML
+rendering sink or exploitable XSS was confirmed in inspected frontend source.
+The SQL/HTML payload test proves literal storage, not end-to-end browser XSS
+coverage. HTTP header smoke checks passed on the rebuilt frontend and backend.
+
+M08 — Backend requirements file was empty. PARTIALLY FIXED.
+Added pinned runtime and test manifests, including patched advisory versions,
+and tested a clean install. A complete hash-locked transitive dependency/SBOM
+pipeline is still recommended. Native extensions should be rebuilt in a clean,
+supported deployment image; the specific local AVIF crash path is now avoided.
+
+LOW / ADDITIONAL GAPS
+L01 — Registration retains its existing eight-character letter/number policy;
+breached-password screening, verified email, idle session timeout, session-device
+management and factor-recovery flows are not implemented. These are requirements
+to design and test, not protections supplied by this audit.
+L02 — Registration still reveals duplicate email availability (409). Login uses
+a generic failure plus dummy Argon2 work for unknown accounts, but no formal
+statistical timing analysis was performed. Consider abuse-resistant registration
+and account-enumeration policy before launch.
+L03 — Eight npm moderate advisory entries remain in development tooling, rooted
+in minimatch (GHSA-g3hv-75wg-m249) and its ESLint dependency chain. Production-only
+npm audit reports zero advisories. No forced major-version override/downgrade was
+used because compatibility was not established. Track an upstream compatible fix.
+L04 — Logging is local application logging, not an immutable audited SIEM trail.
+Success/failure/denial signals are present; correlation, retention, alerts,
+complete privileged-action audit events and protected forwarding remain to deploy.
+L05 — Backup encryption, restore capability, incident response and recovery-time
+objectives were not verified. No private database dump was created for this audit.
+
+VERIFIED EXISTING AND IMPROVED CONTROLS
+- Argon2 password hashing; random reference session tokens stored as SHA-256 hashes.
+- HttpOnly/SameSite cookies; Secure required in configured production mode.
+- Expired/forged sessions denied, logout invalidates the backend session, and
+  reauthentication now replaces the presented same-account session token.
+- Owners/admins manage listings; unowned listings are admin-only by code review.
+- Public list/detail routes expose only active listings. VIN, plate, ownership
+  identifiers and password hashes are excluded from public vehicle serializers.
+- Draft photo metadata and bytes require owner/admin; generated filenames are
+  strictly matched; photo IDs must also match their vehicle.
+- Conversation and offer access is participant-scoped. Admin role alone does NOT
+  grant message/offer access. Watchlists/dashboard/account responses are scoped
+  to the authenticated user. Valid owners/participants retain positive access.
+- SQL uses ORM/bound parameters. Injection payloads stayed literal and test tables
+  remained intact. No user-controlled server-side URL fetch was found; the Next
+  API/upload rewrite target is fixed localhost.
+- Uploaded images are verified, resized and re-encoded to JPEG; metadata/appended
+  payloads are stripped; SVG and damaged files are rejected.
+- Basic tracked-file scans found no recognized private-key, AWS-key or credential-
+  URL pattern. Ignored files, all git history, host secret stores and production
+  secrets were NOT exhaustively audited. No claim of total secret absence is made.
+
+TEST EVIDENCE AND FAILED CHECKS
+Baseline: 51 passed, nine expected failures, establishing missing auth-origin
+checks, absent login/registration limits and password validation echo.
+A later existing-environment run crashed in Pillow's optional AVIF decoder;
+after the decoder restriction, that same environment completed the full suite.
+Final: 77 passed in the existing backend environment and 77 passed in the clean
+verification environment. Clean environment emitted a Starlette/httpx deprecation
+warning; no security-test failure remained.
+Frontend standalone TypeScript and Next production build passed. The existing
+homepage static-generation attempt still logs DYNAMIC_SERVER_USAGE for its
+no-store fetch; the route builds successfully as a dynamic server route.
+Initial independent PostgreSQL startup was blocked by sandbox shared-memory
+permissions; safe pg_temp tests replaced that attempt. Initial pip-audit cache
+access was blocked; rerun with a private temporary cache succeeded. Initial clean
+bootstrap pip had advisories and was updated in the verification environment.
+No broad external penetration test, physical-device test, distributed deployment
+load test, concurrent offer-race test, production TLS probe or backup restore was
+performed. Passing tests are scoped evidence, not a guarantee of security.
+
+DEPENDENCY STATUS
+Original installed inventory: 73 distribution directories, two known advisories.
+Patched installed inventory: no known advisories in the scanner result; versions
+were also confirmed directly for the two updated dependencies. Inventory used
+package-directory versions because reading all original metadata stalled.
+Clean verification environment: no known advisories after updating bootstrap pip.
+Frontend production dependency audit: zero. Full frontend audit: eight moderate
+entries, zero High/Critical. Advisory snapshots are included with the report.
+Only dnspython and opentelemetry-api were updated in the existing backend venv.
+The complete pinned runtime manifest was verified in a separate temporary venv.
+The existing backend reloader was triggered after the package updates. A new
+worker was observed and /health returned 200. No unidentified backend process
+was manually killed. Other deployments still need a controlled restart. Frontend
+headers were verified on a separate rebuilt local preview; existing frontend
+processes must restart to load next.config.ts. No public deployment was performed.
+
+REPRODUCTION
+From backend: .venv/bin/python tests/run_security.py
+To reproduce the clean toolchain: install requirements-dev.txt into a new venv,
+then run that venv's python tests/run_security.py. Do not run ad hoc table-creation
+commands against the development database or point these tests at production.
+From frontend: node node_modules/typescript/bin/tsc --noEmit --incremental false
+              npm run build
+              npm audit --omit=dev
+              npm audit
+
+CHANGED FILES
+.gitignore; backend/app/security.py (new); backend/app/database.py;
+backend/app/main.py; backend/app/routes/auth.py; backend/app/routes/deals.py;
+backend/app/routes/messaging.py; backend/requirements.txt;
+backend/requirements-dev.txt (new); backend/.env.example (new);
+backend/tests/{run_security.py,conftest.py,test_authorization.py,test_hardening.py};
+frontend/next.config.ts; frontend/src/app/login/page.tsx (debug logs removed);
+docs/SECURITY-AUDIT-2026-11-25.txt; docs/SECURITY-OPERATIONS.txt.
+No model migration, marketplace UI redesign, auth-account reset or listing-data
+change was introduced.
+
+REFERENCE COVERAGE (PARTIAL, NOT CERTIFICATION)
+OWASP API1/API3/API5: ownership, field exposure, role and participant tests.
+API2: authentication, sessions, throttling; MFA/account recovery remain gaps.
+API4/API6: request/processing limits and negotiation abuse; aggregate limits remain.
+API7/API10: reviewed URL/API use; fixed local API target, no user URL fetch found.
+API8/API9: environment guards, headers, dependency inventory and restricted docs.
+ASVS 5.0.0: 1.2.4 (queries), 2.4 (anti-automation), 3.3/3.4/3.5 (browser/cookies),
+V5 (files), V6 (authentication), V7 (sessions), 8.2.1–8.2.3 and 8.3.1 (access),
+V13 (configuration), V14 (data), V16 (logs/errors). Only described controls and
+covered cases were verified; entire chapters or assurance levels were not passed.
+
+Sources:
+https://api-security.owasp.org/editions/2023/en/0x11-t10/
+https://asvs.owasp.org/
+https://raw.githubusercontent.com/OWASP/ASVS/v5.0.0/5.0/docs_en/OWASP_Application_Security_Verification_Standard_5.0.0_en.csv
+https://github.com/advisories/GHSA-vvf4-9x63-8xvv
+https://github.com/advisories/GHSA-mf5v-w3w3-f6cg
+https://github.com/advisories/GHSA-g3hv-75wg-m249

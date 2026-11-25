@@ -1,0 +1,16 @@
+# Runtime versions validated by the security regression suite, 25 Nov 2026.
+fastapi==0.165.0
+starlette==1.10.0
+uvicorn[standard]==0.54.0
+SQLAlchemy==2.1.9
+psycopg[binary]==3.3.9
+pydantic==2.14.4
+python-dotenv==1.2.4
+pwdlib[argon2]==0.4.2
+argon2-cffi==25.1.0
+Pillow==13.0.0
+python-multipart==0.0.34
+email-validator==2.4.0
+# Explicit transitive security floors for advisories found in the local environment.
+dnspython==2.9.2
+opentelemetry-api==1.45.2

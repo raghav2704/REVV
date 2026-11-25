@@ -123,6 +123,10 @@ export default function Navbar() {
             Explore Cars
           </Link>
 
+          <Link href="/ai-car-finder" className="rounded-full border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/20">
+            Find Your Car with REVV
+          </Link>
+
           {loading ? (
             <span className="text-zinc-500">
               Checking account...

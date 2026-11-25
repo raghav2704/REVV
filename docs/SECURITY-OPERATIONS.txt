@@ -1,0 +1,91 @@
+REVV SECURITY OPERATIONS — 25 NOVEMBER 2026
+
+The audit verifies local code controls. These deployment tasks are outstanding;
+no production accounts, passwords, roles or data were changed.
+
+1. Production startup and routing
+Set REVV_ENV=production explicitly on backend and frontend. NODE_ENV alone does
+not select backend security mode. Configure exact HTTPS REVV_ALLOWED_ORIGINS,
+REVV_COOKIE_SECURE=true, explicit REVV_ALLOWED_HOSTS and a private persistent
+absolute REVV_RATE_LIMIT_PATH outside uploads. Use backend/.env.example as a
+non-secret template. Never put credentials in frontend NEXT_PUBLIC variables.
+Allow only the public frontend/API hosts and any exact internal Host required
+by the fixed Next.js localhost rewrite; do not use a global wildcard.
+
+Terminate HTTPS at a configured trusted reverse proxy. Bind FastAPI to loopback
+or a private network; firewall it from direct external access. Strip client-
+supplied forwarded headers and configure Uvicorn's forwarded-allow-ips for the
+actual proxy addresses only. The limiter uses ASGI request.client.host, not raw
+X-Forwarded-For. A misconfigured proxy can collapse all users onto one address
+or let clients spoof addresses. Enforce edge body limits, connection/time budgets
+and denial-of-service protections as well as application limits.
+
+Restart running workers after package/config changes so they load the fixes.
+The audit updated only dnspython and opentelemetry-api in the existing venv;
+the full pinned manifest was separately verified. Build/restart Next.js to load
+new headers. Do not interrupt an unidentified production process as a deployment
+strategy. Keep a tested deployment/rollback procedure and separate local/demo
+and production databases, uploads and secrets.
+
+2. PostgreSQL
+Provision a dedicated non-superuser runtime role without CREATEDB/CREATEROLE,
+limited to necessary schema/data operations. Use a separate migration role.
+Replace development trust authentication with appropriate SCRAM/certificate
+controls. Keep PostgreSQL private. Remote connections must use verified TLS
+(sslmode=verify-full plus a trusted CA); a local trusted Unix socket is an
+alternative where appropriate. The new production connection guard rejects
+privileged roles. No role/HBA change or actual account reset was made here.
+
+3. Authentication and admin MFA readiness
+Use a reviewed identity provider or implement WebAuthn/passkeys for admin MFA.
+Bind verified factors server-side to sessions; gate EVERY privileged backend
+operation on the verified factor, not a frontend flag. Design enrollment,
+recovery, factor replacement, fresh reauthentication, hashed recovery codes,
+account disablement and session revocation before exposing public admin routes.
+Add tests for bypass, stale-factor sessions and recovery abuse. MFA is NOT
+implemented by this audit. Retain private/network-restricted administration
+until that work and deployment verification are complete.
+
+Review longer password/passphrase and breached-password rules, email verification,
+idle timeouts, device/session visibility and revoke-all controls. Existing
+accounts/passwords were not reset. A future production cookie-prefix migration
+(__Host-) needs a deliberate compatibility/session rollout plan.
+
+4. Rate limits, files and logs
+Keep SQLite limiter state on a private persistent local disk, shared by workers
+on one host. It is not a multi-host or NFS coordination backend. Before scaling
+to multiple hosts, provide equivalent central/gateway limits and test concurrent
+requests across instances. Current IP/account thresholds are recorded in the
+audit. Monitor 429/503 rates and protect against deliberate account throttling.
+The limiter fails closed if its state is unavailable.
+
+Add upload-account quotas, bounded image-processing concurrency/isolation and
+serialized gallery count checks. Validate disk monitoring, file permissions and
+malware policy. Never serve uploads by bypassing the authorized photo route.
+Next headers contain a compatibility CSP, not a strict nonce-based script CSP.
+Plan and test the latter with Next hydration and the 3D renderer.
+
+Configure revv.security at INFO for successful login events and WARNING/ERROR
+for failures, CSRF denials, access denials and limiter outages. Forward logs to
+protected storage with retention and alerts; add privileged mutation audit events
+and correlation IDs. Do not enable request-body, cookie, password or SQL-parameter
+logging. Minimize personal information and control access to logs.
+
+5. Backups and incident response
+Define recovery-point/recovery-time targets. Encrypt PostgreSQL backups and
+uploaded-photo snapshots, protect keys separately, use restricted backup roles,
+retain an off-host/immutable copy and coordinate DB/upload consistency. Test
+restoration into an isolated environment and document the result. Protect any
+backed-up session data as credentials; consider session revocation after recovery.
+Keep secrets out of git, reports, public assets and routine logs. Prepare an
+incident checklist for credential rotation, session invalidation, evidence
+preservation and dependency remediation. Backup/restoration was not exercised.
+
+6. Regression and dependency maintenance
+Run backend/tests/run_security.py; it refuses unrestricted test connections and
+creates pg_temp tables only. Install requirements-dev.txt in a disposable venv
+for clean verification. Run frontend TypeScript/build and both full/production
+npm audits. Track the remaining ESLint/minimatch moderate advisories without
+forcing an untested major override. Add a hash-locked dependency workflow,
+continuous advisory/secret scanning and a deployment SBOM. Reassess controls
+when introducing external URL fetches, account recovery or payment features.

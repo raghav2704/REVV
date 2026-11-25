@@ -10,7 +10,7 @@ REVV Messaging V2
 - Basic rate limiting
 """
 
-from urllib.parse import urlsplit
+from app.security import verify_write_origin as protect_write
 
 from fastapi import (
     APIRouter,
@@ -34,12 +34,7 @@ router = APIRouter(
     tags=["Messaging"],
 )
 
-ALLOWED_ORIGINS = {
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-}
+
 
 MAX_MESSAGE_LENGTH = 2000
 MAX_MESSAGES_PER_MINUTE = 10
@@ -52,22 +47,6 @@ def get_db():
     finally:
         db.close()
 
-
-def protect_write(request: Request):
-    origin = request.headers.get("origin")
-
-    if not origin:
-        referer = request.headers.get("referer", "")
-        if referer:
-            parsed = urlsplit(referer)
-            if parsed.scheme and parsed.netloc:
-                origin = f"{parsed.scheme}://{parsed.netloc}"
-
-    if origin not in ALLOWED_ORIGINS:
-        raise HTTPException(
-            status_code=403,
-            detail="Untrusted request origin",
-        )
 
 
 class StartConversation(BaseModel):

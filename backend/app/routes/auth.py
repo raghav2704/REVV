@@ -9,17 +9,21 @@ from fastapi import (
     Depends,
     HTTPException,
     Response,
+    Request,
     status,
 )
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from pwdlib import PasswordHash
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models.user import User
 from app.models.user_session import UserSession
+from app.security import COOKIE_SECURE, auth_rate_limit
+import logging
+logger = logging.getLogger("revv.security")
 
 
 router = APIRouter(
@@ -28,10 +32,11 @@ router = APIRouter(
 )
 
 password_hasher = PasswordHash.recommended()
+DUMMY_PASSWORD_HASH = password_hasher.hash(secrets.token_urlsafe(32))
 
 COOKIE_NAME = "revv_session"
 SESSION_DAYS = 7
-COOKIE_SECURE = os.getenv("REVV_COOKIE_SECURE", "false").lower() == "true"
+
 
 
 def get_db():
@@ -75,7 +80,7 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=128)
 
 
 class UserResponse(BaseModel):
@@ -163,8 +168,10 @@ def get_optional_current_user(
 )
 def register_user(
     payload: RegisterRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    auth_rate_limit(request, "register_ip", 5, 3600)
     email = str(payload.email).strip().lower()
 
     existing = db.scalar(
@@ -202,19 +209,22 @@ def register_user(
 @router.post("/login", response_model=LoginResponse)
 def login_user(
     payload: LoginRequest,
+    request: Request,
     response: Response,
     db: Session = Depends(get_db),
 ):
+    auth_rate_limit(request, "login_ip", 10, 60)
     email = str(payload.email).strip().lower()
 
+    auth_rate_limit(request, "login_account", 30, 600, identity=email)
     user = db.scalar(
         select(User).where(User.email == email)
     )
 
-    if not user or not password_hasher.verify(
-        payload.password,
-        user.password_hash,
-    ):
+    # A real Argon2 verification for unknown accounts reduces timing enumeration.
+    valid = password_hasher.verify(payload.password, user.password_hash if user else DUMMY_PASSWORD_HASH)
+    if not user or not valid:
+        logger.warning("event=login_failed")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -231,6 +241,12 @@ def login_user(
         expires_at=expires,
     )
 
+    previous_token = request.cookies.get(COOKIE_NAME)
+    if previous_token:
+        db.execute(delete(UserSession).where(
+            UserSession.token_hash == hash_token(previous_token),
+            UserSession.user_id == user.id,
+        ))
     db.add(session)
     db.commit()
 
@@ -244,6 +260,7 @@ def login_user(
         path="/",
     )
 
+    logger.info("event=login_succeeded user_id=%d", user.id)
     return {
         "message": "Logged in successfully",
         "user": user,

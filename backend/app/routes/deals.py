@@ -14,7 +14,7 @@ No payment or vehicle ownership transfer occurs here.
 """
 
 from datetime import datetime
-from urllib.parse import urlsplit
+from app.security import verify_write_origin as protect_write
 
 from fastapi import (
     APIRouter,
@@ -38,12 +38,7 @@ router = APIRouter(
     tags=["REVV Deals"],
 )
 
-ALLOWED_ORIGINS = {
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-}
+
 
 TERMINAL_STATUSES = {
     "accepted",
@@ -59,22 +54,6 @@ def get_db():
     finally:
         db.close()
 
-
-def protect_write(request: Request):
-    origin = request.headers.get("origin")
-
-    if not origin:
-        referer = request.headers.get("referer", "")
-        if referer:
-            parsed = urlsplit(referer)
-            if parsed.scheme and parsed.netloc:
-                origin = f"{parsed.scheme}://{parsed.netloc}"
-
-    if origin not in ALLOWED_ORIGINS:
-        raise HTTPException(
-            status_code=403,
-            detail="Untrusted request origin",
-        )
 
 
 def public_vehicle(db: Session, vehicle_id: int):
@@ -172,6 +151,18 @@ def offer_row(
         )
 
     return dict(row)
+
+
+def enforce_offer_rate_limit(db: Session, user_id: int):
+    # Shared PostgreSQL limit covers initial offers AND every negotiation response.
+    db.execute(text("SELECT pg_advisory_xact_lock(:user_id)"), {"user_id": int(user_id)})
+    count = db.execute(text("""
+        SELECT COUNT(*) FROM vehicle_offer_events
+        WHERE actor_id = :user_id
+          AND created_at > NOW() - INTERVAL '1 minute'
+    """), {"user_id": user_id}).scalar_one()
+    if count >= 5:
+        raise HTTPException(429, "Too many offer actions. Try again shortly.", headers={"Retry-After": "60"})
 
 
 def add_offer_event(
@@ -488,27 +479,7 @@ def create_offer(
     conditions = normalize_conditions(payload.conditions)
 
     try:
-        # Serialize this buyer's offer creations.
-        db.execute(
-            text("SELECT pg_advisory_xact_lock(:user_id)"),
-            {"user_id": int(user.id)},
-        )
-
-        recent = db.execute(
-            text("""
-                SELECT COUNT(*)
-                FROM vehicle_offer_events
-                WHERE actor_id = :user_id
-                  AND created_at > NOW() - INTERVAL '1 minute'
-            """),
-            {"user_id": user.id},
-        ).scalar_one()
-
-        if recent >= 5:
-            raise HTTPException(
-                status_code=429,
-                detail="Too many offer actions. Try again shortly.",
-            )
+        enforce_offer_rate_limit(db, user.id)
 
         existing = db.execute(
             text("""
@@ -680,6 +651,7 @@ def respond_to_offer(
         )
 
     try:
+        enforce_offer_rate_limit(db, user.id)
         offer = offer_row(
             db,
             offer_id,
